@@ -2,7 +2,9 @@
 
 The backstory behind every account on your X timeline. Rugs, real devs, paid shills, right under the post.
 
-This repository is the full source of the fable browser extension, so anyone can read exactly what it does before installing it. fable is not on the Chrome Web Store yet, so for now you install it yourself from the download on [fable.market](https://fable.market).
+This repository is the full source of the fable browser extension, so anyone can read exactly what it does before installing it.
+
+We are working on getting fable onto the Chrome Web Store, with a lot of updates lined up for right after it lands. Until then you install it yourself from the download on [fable.market](https://fable.market/install).
 
 Site: [fable.market](https://fable.market) · X: [@FableDotMarket](https://x.com/FableDotMarket)
 
