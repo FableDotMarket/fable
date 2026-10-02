@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Fable",
-  "version": "0.26.0",
+  "version": "0.26.1",
   "description": "The backstory behind every account on your timeline. Rugs, real devs, paid shills.",
   "icons": {
     "16": "icons/icon16.png",

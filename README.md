@@ -70,4 +70,4 @@ fable's servers are not part of this repository.
 
 ## License
 
-[MIT](LICENSE)
+[PolyForm Strict 1.0.0](LICENSE). The source is public so you can read it, check it and run it for yourself. It is not free to reuse: you may not copy it into another product, change it and redistribute it, or publish your own build of it. The only official build is the one on [fable.market](https://fable.market) and in this repo's Releases.
