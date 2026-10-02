@@ -2,7 +2,7 @@
 // Settings live in chrome.storage.sync (content.js and background.js read the same keys);
 // activity, recent flags and the signed-in X account are written to chrome.storage.local by content.js.
 const DEFAULTS = {enabled: true, showRug: true, showKol: true, showLegit: true, showNeutral: true, fade: true, stamps: true, cards: true,
-  tokenMarks: true, profilePanel: true, trendingPanel: true, capture: true, demo: false, apiUrl: 'https://api.fable.market'};
+  tokenMarks: true, profilePanel: true, trendingPanel: true, capture: true};
 const PRESETS = {
   all: {showRug: true, showKol: true, showLegit: true, showNeutral: true},
   warn: {showRug: true, showKol: true, showLegit: false, showNeutral: false},
@@ -14,15 +14,38 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<
 const n0 = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}K` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(n ?? 0));
 const ago = (ms) => { const m = Math.round((Date.now() - ms) / 60e3); return m < 1 ? 'now' : m < 60 ? `${m}m` : m < 1440 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`; };
 const send = (msg) => new Promise((ok) => chrome.runtime.sendMessage(msg, (r) => ok(chrome.runtime.lastError ? null : r)));
-const face = (src, cls = '') => (src ? `<img class="${cls}" src="${esc(src)}" alt="">` : `<span class="ph ${cls}"></span>`);
+// no picture on file: the fable mark, never an empty circle
+const face = (src, cls = '') => (src ? `<img class="${cls}" src="${esc(src)}" alt="">` : `<span class="ph ${cls}"><svg><use href="#f"/></svg></span>`);
 
 let S = {...DEFAULTS};
+
+/* ---------------- motion (fable.market: blur-up reveal, count-up numbers) ---------------- */
+const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+// replays the staggered entrance on a container's direct children
+const enter = (el) => {
+  if (!el || still) return;
+  [...el.children].forEach((c, i) => c.style.setProperty('--i', i));
+  el.classList.remove('enter'); void el.offsetWidth; el.classList.add('enter');
+};
+// numbers count up from where they are to the new value
+const countTo = (el, n) => {
+  const to = Number(n) || 0, from = Number(el.dataset.n || 0);
+  el.dataset.n = to;
+  if (still || to === from || to > 1e4) { el.textContent = n0(to); return; }
+  const t0 = performance.now(), dur = 700;
+  const step = (t) => { const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3); el.textContent = n0(Math.round(from + (to - from) * e)); if (k < 1) requestAnimationFrame(step); };
+  requestAnimationFrame(step);
+};
 const save = (patch) => { Object.assign(S, patch); chrome.storage.sync.set(patch); paintSettings(); };
 
 /* ---------------- tabs ---------------- */
 const show = (tab) => {
-  $$('nav button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+  const btns = $$('nav button');
+  btns.forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+  $('nav .ind').style.transform = `translateX(${Math.max(0, btns.findIndex((b) => b.dataset.tab === tab)) * 100}%)`;
   $$('.view').forEach((v) => v.classList.toggle('on', v.id === `v-${tab}`));
+  $('main').scrollTop = 0;
+  enter($(`#v-${tab}`));
   if (tab === 'scan') setTimeout(() => $('#q').focus(), 50);
   try { localStorage.setItem('fable.tab', tab); } catch {}
 };
@@ -39,20 +62,18 @@ function paintSettings() {
   $$('[data-k]').forEach((el) => { el.checked = !!S[el.dataset.k]; });
   const p = presetOf();
   $$('#preset button').forEach((b) => b.classList.toggle('on', b.dataset.p === p));
-  if (document.activeElement !== $('#apiUrl')) $('#apiUrl').value = S.apiUrl || '';
 }
 $$('[data-k]').forEach((el) => el.addEventListener('change', () => save({[el.dataset.k]: el.checked})));
 $$('#preset button').forEach((b) => b.addEventListener('click', () => save(PRESETS[b.dataset.p])));
-$('#apiUrl').addEventListener('change', (e) => save({apiUrl: e.target.value.trim().replace(/\/$/, '')}));
 
 /* ---------------- home ---------------- */
 async function paintHome() {
   const day = new Date().toISOString().slice(0, 10);
   const {activity, recent} = await chrome.storage.local.get({activity: null, recent: []});
   const a = activity?.day === day ? activity : {checked: 0, flagged: 0, scams: 0};
-  $('#n-checked').textContent = n0(a.checked);
-  $('#n-flagged').textContent = n0(a.flagged);
-  $('#n-scams').textContent = n0(a.scams);
+  countTo($('#n-checked'), a.checked);
+  countTo($('#n-flagged'), a.flagged);
+  countTo($('#n-scams'), a.scams);
   const feed = $('#feed');
   if (!recent.length) {
     feed.innerHTML = `<div class="empty card"><b>Nothing flagged yet</b>Scroll X with Fable on and every scam, shill and bundled launch you pass lands here.</div>`;
@@ -66,6 +87,7 @@ async function paintHome() {
         ${r.detail ? `<div class="d">${esc(r.detail)}</div>` : ''}
       </div>
     </a>`).join('');
+  enter(feed);
 }
 
 /* ---------------- trending (smart accounts talking about / following them) ---------------- */
@@ -84,10 +106,11 @@ async function paintTrending() {
       <div class="body">
         <div class="top"><b>${esc(x.name || x.handle)}</b>${x.role ? `<span class="role">${esc(x.role)}</span>` : ''}<em>${i + 1}</em></div>
         <div class="d">${esc(x.line || `@${x.handle}`)}</div>
-        <div class="why"><span class="faces">${(x.by || []).map((b) => (b.avatar ? `<img src="${esc(b.avatar)}" alt="">` : '<i></i>')).join('')}</span><span>${x.early ? '<span class="early">Early</span> · ' : ''}${esc(x.why || '')}</span></div>
+        <div class="why">${(x.by || []).some((b) => b.avatar) ? `<span class="faces">${(x.by || []).filter((b) => b.avatar).slice(0, 3).map((b) => `<img src="${esc(b.avatar)}" alt="">`).join('')}</span>` : ''}<span>${x.early ? '<span class="early">Early</span> · ' : ''}${esc(x.why || '')}</span></div>
         ${x.risk ? `<div class="risk">${esc(x.risk)}</div>` : ''}
       </div>
     </a>`).join('');
+  enter(box);
 }
 $$('#trend-win button').forEach((b) => b.addEventListener('click', () => { trendWin = b.dataset.w; paintTrending(); }));
 
@@ -115,6 +138,9 @@ $('#scan-form').addEventListener('submit', async (e) => {
   const addr = k.query?.address || r?.address || r?.token?.address || null;
   const href = k.type === 'scan' ? (addr ? `https://intel.fable.market/c/${encodeURIComponent(addr)}` : null) : k.handle ? `https://intel.fable.market/a/${encodeURIComponent(k.handle)}` : null;
   if (href) out.insertAdjacentHTML('beforeend', `<a class="dossier-link" href="${href}" target="_blank" rel="noopener">Open the full dossier</a>`);
+  // anyone can send Fable a lead; once Fable confirms it, it goes straight into the database (fable.market/submit)
+  const lead = k.type === 'scan' ? (addr ? `kind=scam_token&target=${encodeURIComponent(addr)}${r?.chain ? `&chain=${encodeURIComponent(r.chain)}` : ''}` : '') : `target=${encodeURIComponent(k.handle)}`;
+  out.insertAdjacentHTML('beforeend', `<a class="report-link" href="https://fable.market/submit${lead ? `?${lead}` : ''}" target="_blank" rel="noopener">${k.type === 'scan' ? 'Report this token to Fable' : `Report or vouch for @${esc(k.handle)}`}</a>`);
 });
 const LEVEL = {danger: ['rug', 'High risk'], caution: ['kol', 'Caution'], ok: ['legit', 'No red flags'], unknown: ['', 'Not enough data']};
 function tokenHTML(r) {
@@ -149,10 +175,10 @@ async function paintAccount() {
   $('#me').innerHTML = xAccount
     ? `${face(xAccount.avatar)}<div><b>${esc(xAccount.name || xAccount.handle)}</b><span class="muted">@${esc(xAccount.handle)} · linked from x.com</span></div>`
     : `<span class="ph"></span><div><b>No X account yet</b><span class="muted">Open x.com while signed in to link it</span></div>`;
-  $('#a-checked').textContent = n0(activity?.checked || 0);
-  $('#a-flagged').textContent = n0(activity?.flagged || 0);
+  countTo($('#a-checked'), activity?.checked || 0);
+  countTo($('#a-flagged'), activity?.flagged || 0);
   const st = await send({type: 'stats'});
-  $('#a-graph').textContent = n0(st?.users || 0);
+  countTo($('#a-graph'), st?.users || 0);
   $('#ver').textContent = `Fable ${chrome.runtime.getManifest().version}`;
 }
 $('#redo').addEventListener('click', () => openSetup());
@@ -167,7 +193,8 @@ $('#clear').addEventListener('click', async () => {
 /* ---------------- first-run setup ---------------- */
 let step = 0, pick = 'all';
 const paintStep = () => {
-  $$('#setup .step').forEach((s) => s.classList.toggle('on', Number(s.dataset.s) === step));
+  $('#setup').dataset.step = step;
+  $$('#setup .step').forEach((s) => { s.classList.toggle('on', Number(s.dataset.s) === step); [...s.children].forEach((c, i) => c.style.setProperty('--i', i)); });
   $$('#setup .steps i').forEach((d, i) => d.classList.toggle('on', i <= step));
 };
 async function paintSetupX() {
@@ -189,6 +216,13 @@ $('#finish').addEventListener('click', async () => {
 });
 
 /* ---------------- boot ---------------- */
+requestAnimationFrame(() => $('#hero')?.classList.add('lit'));
+// the old Advanced panel is gone: clear what an older version may have saved (demo labels, offline mode, a custom API)
+chrome.storage.sync.get(['demo', 'mode', 'apiUrl'], (o) => {
+  const junk = ['demo', 'mode'].filter((k) => k in o);
+  if (o.apiUrl && o.apiUrl !== 'https://api.fable.market') junk.push('apiUrl');
+  if (junk.length) chrome.storage.sync.remove(junk);
+});
 chrome.storage.sync.get(DEFAULTS, async (s) => {
   S = s;
   paintPower(); paintSettings(); paintHome(); paintAccount(); paintTrending();

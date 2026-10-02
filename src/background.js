@@ -1,7 +1,7 @@
 // Fable background service worker (ES module).
-// Decides verdicts: demo overrides -> live API (Jev + DB) -> local heuristics.
+// Decides verdicts: live API (Jev + DB) -> local heuristics.
 // Also builds the smart-follower graph from X data the user already loads.
-import {heuristicVerdict, textSignals} from './verdict.js';
+import {heuristicVerdict, textSignals, guardScan, guardApiVerdict, needsGuard, postAddress} from './verdict.js';
 import {SMART} from './smart.js';
 import './config.js';
 
@@ -27,11 +27,15 @@ refreshConfig(true);
 chrome.runtime.onStartup?.addListener(() => refreshConfig(true));
 chrome.runtime.onInstalled?.addListener(() => refreshConfig(true));
 
-const DEFAULTS = {enabled: true, mode: 'auto', apiUrl: 'https://api.fable.market', demo: false, capture: true};
-let DEMO = null;
-const demo = async () => (DEMO ||= await fetch(chrome.runtime.getURL('src/demo.json')).then((r) => r.json()));
+const API_URL = 'https://api.fable.market';
+const DEFAULTS = {enabled: true, apiUrl: API_URL, capture: true};
 const settings = async () => {
   const s = await chrome.storage.sync.get(DEFAULTS);
+  // the old Advanced panel (removed in 0.26.4) could switch on launch-video demo labels, set an offline mode or blank the
+  // API: none of that applies any more, whatever an older version saved
+  delete s.demo;
+  s.mode = 'auto';
+  if (!/^https:\/\//.test(s.apiUrl || '')) s.apiUrl = API_URL;
   // the API moved from api.fable.trading to api.fable.market; the old host stays up, but move saved settings over once
   if (/^https:\/\/api\.fable\.trading\/?$/.test(s.apiUrl || '')) {
     s.apiUrl = 'https://api.fable.market';
@@ -230,12 +234,30 @@ async function factsFor(t) {
 // read of the post with a verbatim quote) only ever CONFIRMS a rule that already fired part way; it never flags alone.
 const LOCAL_FLAGS = /^(AI slop|Impersonator|Phishing link|Fake giveaway|Seed phrase ask|Fake support|Recovery scam|Fake claim|Drainer link|Scam pattern)$/;
 const readsFor = (tweets) => intelGet(`/v1/reads?ids=${tweets.map((t) => t.id).join(',')}`, 30e3, 3000).catch(() => null);
+// The live API also runs the token rules from before the standing guard (verdict.js guardScan / guardFacts): a coin that
+// has proven itself (an official token such as $PONS, a protected ticker such as $ZEC, or a coin 30+ days old with $1M+
+// liquidity) could get "High-risk token" or "Scam KOL push" from who posted it. Such a verdict is decided again here with
+// the guard, keeping the API's other rows. It only ever takes a promotion-only flag away; it never adds one.
+async function guardVerdict(t, v) {
+  if (!needsGuard(v, t)) return v;
+  const ca = postAddress(t);
+  // the same lite scan the post's token underline asks for (one cached read per coin), 4 s at most
+  const scan = ca ? await apiGet(`/v1/token/scan?${new URLSearchParams({address: ca, lite: '1'})}`, 5 * 60e3, 4000).catch(() => null) : null;
+  const g = guardApiVerdict(t, v, scan);
+  if (!g) return v;
+  if (!g.redo) return {...v, card: g.card || undefined, ...(g.dropDetail ? {detail: undefined} : {})};
+  let local = null;
+  try { local = heuristicVerdict(t, {...(await factsFor(t)), ...(g.postToken ? {postToken: g.postToken} : {})}); } catch { local = null; }
+  if (!local || local.hidden) return {id: v.id, source: `${v.source || 'api'}+guard`, tone: 'neutral', label: 'No flags', stat: 'clean', confidence: 0.5, ...(g.card ? {card: g.card} : {})};
+  return {...local, card: g.card || local.card, source: `${v.source || 'api'}+guard`};
+}
 async function sharpen(tweets, api, readsP = null) {
   const byId = new Map((api || []).map((v) => [String(v.id), v]));
   const reads = (await (readsP || readsFor(tweets))) || {};
   const out = [];
   for (const t of tweets) {
-    const v = byId.get(String(t.id));
+    let v = byId.get(String(t.id));
+    try { v = await guardVerdict(t, v); } catch { /* keep the API verdict */ }
     let local = null;
     try { local = heuristicVerdict(t, await factsFor(t)); } catch { local = null; }
     const rd = reads[String(t.id)];
@@ -266,23 +288,33 @@ async function sharpen(tweets, api, readsP = null) {
   return out;
 }
 
+// API verdicts kept for 6 h across browser restarts (the API itself caches as long), so reopening X shows the right
+// pill at once; the API is still asked every time and its answer replaces the kept one in place
+const VKEEP_MS = 6 * 3600e3, VKEEP_MAX = 400;
+let vkeep = null, vkeepTimer = null;
+async function vkeepLoad() {
+  // 'vkeep2': only verdicts that went through sharpen()'s 0.27 guard; anything an older build kept is ignored
+  if (!vkeep) { try { vkeep = (await chrome.storage.local.get('vkeep2')).vkeep2 || {}; chrome.storage.local.remove('vkeep').catch(() => {}); } catch { vkeep = {}; } }
+  return vkeep;
+}
+function vkeepSave() {
+  clearTimeout(vkeepTimer);
+  vkeepTimer = setTimeout(() => {
+    const now = Date.now();
+    vkeep = Object.fromEntries(Object.entries(vkeep || {}).filter(([, x]) => now - x.at < VKEEP_MS).sort((a, b) => b[1].at - a[1].at).slice(0, VKEEP_MAX));
+    chrome.storage.local.set({vkeep2: vkeep}).catch(() => {});
+  }, 1500);
+}
+async function vkeepPut(list) {
+  const k = await vkeepLoad(), now = Date.now();
+  for (const v of list || []) if (v?.id && !v.recheck) k[String(v.id)] = {at: now, v};
+  vkeepSave();
+}
+
 async function verdicts(tweets) {
   const s = await settings();
   const out = [];
-  let rest = tweets;
-
-  // Demo mode only scripts the launch-video accounts. Everyone else gets the real verdict:
-  // never invent history for a real account.
-  if (s.demo) {
-    const d = await demo();
-    rest = [];
-    for (const t of tweets) {
-      const o = d[t.author?.handle];
-      if (o) out.push({...o, id: t.id, confidence: 0.95, source: 'demo'});
-      else rest.push(t);
-    }
-    if (!rest.length) return out;
-  }
+  const rest = tweets;
 
   if (rest.length && s.apiUrl && s.mode !== 'offline') {
     // the post reader's answers are asked for alongside the API verdicts, not after them
@@ -295,7 +327,9 @@ async function verdicts(tweets) {
       clearTimeout(timer);
       if (r.ok) {
         const j = await r.json();
-        out.push(...(await sharpen(rest, j.verdicts, readsP)));
+        const api = await sharpen(rest, j.verdicts, readsP);
+        vkeepPut(api);
+        out.push(...api);
         return out;
       }
     } catch (_) {
@@ -335,9 +369,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (msg.type === 'quick') {
     refreshConfig(); // piggybacks on scrolling: at most one config read per 15 min
     settings().then(async (s) => {
-      if (s.demo) return reply({verdicts: []});
-      const out = [];
-      for (const t of msg.tweets || []) { try { out.push(heuristicVerdict(t, await factsFor(t))); } catch { /* skip */ } }
+      const out = [], k = await vkeepLoad(), now = Date.now();
+      for (const t of msg.tweets || []) {
+        const kept = k[String(t.id)];
+        if (kept && now - kept.at < VKEEP_MS) { out.push({...kept.v, kept: true}); continue; }
+        try { out.push(heuristicVerdict(t, await factsFor(t))); } catch { /* skip */ }
+      }
       reply({verdicts: out});
     }).catch(() => reply({verdicts: []}));
     return true;
@@ -353,7 +390,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   // profile panel and contract scanner: thin, cached proxies to the API
   if (msg.type === 'profile' || msg.type === 'scan') {
     apiGet(msg.type === 'profile' ? `/v1/profile?${new URLSearchParams({handle: msg.handle || '', ...(msg.id ? {id: msg.id} : {})})}` : `/v1/token/scan?${new URLSearchParams(msg.query || {})}`)
-      .then((r) => reply(r))
+      // token scans are read with the standing guard: an official or established coin is never red or amber from who posted it
+      .then((r) => reply(msg.type === 'scan' && r ? guardScan(r, {bySymbol: !msg.query?.address}) : r))
       .catch(() => reply(null));
     return true;
   }
@@ -383,23 +421,25 @@ const INTEL_URL = 'https://intel.fable.market';
 const INTEL_CACHE = new Map();
 const INFLIGHT = new Map(); // one network read per path however many cards ask at once
 // Chrome puts this worker to sleep after ~30 s idle and the Map above is lost: cards and histories are also kept in
-// storage.session (memory-backed, cleared when the browser closes), so the next scroll after a pause is still warm.
+// storage.local so the first scroll after a pause, or after reopening the browser, is warm. A kept answer older than
+// the read's ttl is shown at once and refreshed in the background (contracts for 30 min, histories for 6 h).
 const KEEP = /^\/v1\/(contract|history)\?/;
+const KEEP_STALE = (path) => (path.startsWith('/v1/history') ? 6 * 3600e3 : 30 * 60e3);
 const SKEY = (path) => `ic:${path}`;
 let keepIndex = null;
 async function keepPut(path, entry) {
-  if (!KEEP.test(path) || !chrome.storage?.session) return;
+  if (!KEEP.test(path) || !chrome.storage?.local) return;
   try {
-    keepIndex = keepIndex || (await chrome.storage.session.get('ic:index'))['ic:index'] || [];
+    keepIndex = keepIndex || (await chrome.storage.local.get('ic:index'))['ic:index'] || [];
     keepIndex = keepIndex.filter((p) => p !== path).concat(path);
     const drop = keepIndex.length > 80 ? keepIndex.splice(0, keepIndex.length - 80) : [];
-    await chrome.storage.session.set({[SKEY(path)]: entry, 'ic:index': keepIndex});
-    if (drop.length) await chrome.storage.session.remove(drop.map(SKEY));
+    await chrome.storage.local.set({[SKEY(path)]: entry, 'ic:index': keepIndex});
+    if (drop.length) await chrome.storage.local.remove(drop.map(SKEY));
   } catch { /* quota: memory cache only */ }
 }
 async function keepGet(path) {
-  if (!KEEP.test(path) || !chrome.storage?.session) return null;
-  try { return (await chrome.storage.session.get(SKEY(path)))[SKEY(path)] || null; } catch { return null; }
+  if (!KEEP.test(path) || !chrome.storage?.local) return null;
+  try { return (await chrome.storage.local.get(SKEY(path)))[SKEY(path)] || null; } catch { return null; }
 }
 // the post id rides along for the server's sighting log, but one coin is one cache entry whatever post shows it
 const cacheKey = (path) => path.replace(/([?&])tweet=\d+&?/, '$1').replace(/[?&]$/, '');
@@ -408,7 +448,8 @@ async function intelGet(path, ttl = 20e3, timeoutMs = 15000) {
   let hit = INTEL_CACHE.get(key);
   if (!hit && ttl) { hit = await keepGet(key); if (hit) INTEL_CACHE.set(key, hit); }
   if (ttl && hit && Date.now() - hit.at < ttl) return hit.data;
-  if (INFLIGHT.has(key)) return INFLIGHT.get(key);
+  const stale = ttl && hit && KEEP.test(key) && Date.now() - hit.at < KEEP_STALE(key) ? hit.data : null;
+  if (INFLIGHT.has(key)) return stale || INFLIGHT.get(key);
   const p = (async () => {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), timeoutMs);
@@ -421,7 +462,7 @@ async function intelGet(path, ttl = 20e3, timeoutMs = 15000) {
     } catch { return null; } finally { clearTimeout(timer); INFLIGHT.delete(key); }
   })();
   INFLIGHT.set(key, p);
-  return p;
+  return stale || p;
 }
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (msg.type === 'contract') {
@@ -445,19 +486,166 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     intelGet(`/v1/coins?${new URLSearchParams({window: String(msg.window || '6h')})}`, 60e3).then(reply);
     return true;
   }
+  // candles: tf auto | 1s | 15s | 1m | 5m | 15m | 1h | 4h; from / to (ms) ask for an older range (zoom, pan, All).
+  // A closed range never changes (kept 5 minutes); the live end is kept 10 s.
   if (msg.type === 'candles') {
-    intelGet(`/v1/candles?${new URLSearchParams({address: String(msg.address || ''), tf: String(msg.tf || '5m'), ...(msg.chain ? {chain: String(msg.chain)} : {})})}`, 10e3).then(reply);
+    const tf = /^(auto|1s|15s|30s|1m|5m|15m|1h|4h)$/.test(String(msg.tf || '')) ? String(msg.tf) : '5m';
+    const ms = (x) => (Number.isFinite(+x) && +x > 0 ? String(Math.floor(+x)) : null);
+    const from = ms(msg.from), to = ms(msg.to);
+    // fine=1: this chart draws 1 s candles, so a coin under 5 minutes comes back on them in one read
+    const q = {address: String(msg.address || ''), tf, fine: '1', ...(msg.chain ? {chain: String(msg.chain)} : {}), ...(from ? {from} : {}), ...(to ? {to} : {})};
+    intelGet(`/v1/candles?${new URLSearchParams(q)}`, to && +to < Date.now() - 120e3 ? 5 * 60e3 : 10e3).then(reply);
     return true;
   }
   return false;
 });
-// live: one WebSocket per coin, shared by every card showing it; closed as soon as no card is watching
-const LIVE = new Map();
-function liveOpen(key, e) {
-  const ws = new WebSocket(`${INTEL_URL.replace(/^http/, 'ws')}/v1/live?${new URLSearchParams({address: e.msg.address || '', chain: e.msg.chain || ''})}`);
+/* ---------------- Live trades (0.27.1) ----------------
+   Robinhood and Solana coins: Fable's own hub (live.fable.market, fed by Fable's index about 0.2 s after each block),
+   ONE WebSocket for the whole browser (/v1/stream: {op:'sub'|'unsub', a:[address]}), shared by every card; "ping" every
+   20 s keeps it (and this worker) awake. Other chains: intel's per-coin socket, as before. While the hub cannot be
+   reached, or its feed stays delayed longer than timing.liveHubDelayMs, its coins are served by intel's own room
+   (/v1/live?via=room) and go back to the hub once it reports live again. Every card gets the same messages either way:
+   {type:'trade'|'tick', p, t, usd, side, tx}, {type:'status', live, delayed}, {type:'void', tx}.
+   Remote switches (src/config.js): on.liveHub false = intel for everything; on.liveStream false = one hub socket per coin. */
+const HUB_WS = 'wss://live.fable.market';
+const INTEL_WS = INTEL_URL.replace(/^http/, 'ws');
+const EVM_RE = /^0x[0-9a-fA-F]{40}$/, SOL_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+let CFG_BG = globalThis.FableConfig?.DEFAULT || {};
+chrome.storage.local.get('fableConfig').then(({fableConfig}) => { if (fableConfig) CFG_BG = fableConfig; }).catch(() => {});
+chrome.storage.onChanged?.addListener((ch, area) => { if (area === 'local' && ch.fableConfig?.newValue) CFG_BG = ch.fableConfig.newValue; });
+const liveOn = (k) => CFG_BG?.on?.[k] !== false;
+// the hub serves Robinhood and Solana; an EVM coin of another (or an unknown) chain keeps intel's room
+const hubChain = (address, chain) => {
+  const c = String(chain || '').toLowerCase();
+  if (EVM_RE.test(address)) return c === 'robinhood' ? 'robinhood' : null;
+  if (SOL_RE.test(address)) return !c || c === 'solana' ? 'solana' : null;
+  return null;
+};
+const DELAYED = (note) => ({type: 'status', live: true, delayed: true, note});
+const LIVE = new Map(); // key -> {key, a, msg, ports, status, mode: 'stream' | 'coin' | 'intel', parked, ws}
+const hub = {ws: null, open: false, fails: 0, downUntil: 0, retry: 0, ping: 0, idle: 0, status: null, lateTimer: 0, late: false};
+
+function deliver(e, d) {
+  if (!d || typeof d !== 'object') return;
+  if (d.type === 'status') e.status = d;
+  for (const p of e.ports) { try { p.postMessage(d); } catch { /* card gone */ } }
+}
+const streamed = () => [...LIVE.values()].filter((e) => e.mode === 'stream');
+
+// one coin, one socket: the hub's /v1/live (mode 'coin'), or intel's (mode 'intel'; via=room for a hub coin, so intel does
+// not send it straight back to the hub)
+function coinOpen(e, mode) {
+  try { e.ws?.close(); } catch { /* closed */ }
+  e.mode = mode === 'park' ? 'stream' : mode;
+  e.parked = mode === 'park';
+  const hc = hubChain(e.a, e.msg.chain);
+  const q = new URLSearchParams({address: e.a, chain: e.msg.chain || '', ...(mode !== 'coin' && hc ? {via: 'room'} : {})});
+  const ws = new WebSocket(`${mode === 'coin' ? HUB_WS : INTEL_WS}/v1/live?${q}`);
+  let opened = false;
   e.ws = ws;
-  ws.onmessage = (ev) => { let d; try { d = JSON.parse(ev.data); } catch { return; } for (const p of e.ports) { try { p.postMessage(d); } catch { /* card gone */ } } };
-  ws.onclose = () => { if (LIVE.get(key) === e && e.ports.size) setTimeout(() => LIVE.get(key) === e && e.ports.size && liveOpen(key, e), 3000); };
+  ws.onopen = () => { opened = true; };
+  ws.onmessage = (ev) => { if (e.ws !== ws) return; let d; try { d = JSON.parse(ev.data); } catch { return; } deliver(e, d); };
+  // a dropped socket: the cards show DELAYED until the next status says the stream is back
+  ws.onclose = () => {
+    if (e.ws !== ws) return;
+    e.ws = null;
+    if (LIVE.get(e.key) !== e || !e.ports.size) return;
+    deliver(e, DELAYED('reconnecting'));
+    if (mode === 'coin' && !opened) hubDown(); // the hub refused or is unreachable: intel's room for a minute
+    setTimeout(() => { if (LIVE.get(e.key) === e && e.ports.size && !e.ws && (e.mode !== 'stream' || e.parked)) route(e); }, 3000);
+  };
+}
+function route(e) {
+  const hc = liveOn('liveHub') && hubChain(e.a, e.msg.chain);
+  if (!hc) return coinOpen(e, 'intel');
+  if (Date.now() < hub.downUntil) { if (liveOn('liveStream')) { e.mode = 'stream'; hubEnsure(); } return coinOpen(e, liveOn('liveStream') ? 'park' : 'intel'); }
+  if (!liveOn('liveStream')) return coinOpen(e, 'coin');
+  e.mode = 'stream';
+  hubSend('sub', [e.a]);
+  hubEnsure();
+  // the hub is up but its feed has been delayed too long: intel's room until it says live again
+  if (hub.late) return coinOpen(e, 'park');
+  const ws = e.ws;
+  e.ws = null; e.parked = false;
+  try { ws?.close(); } catch { /* closed */ }
+  if (hub.open && hub.status) deliver(e, hub.status);
+}
+// the hub could not be reached: a minute (doubling to 5) on intel's rooms, then the hub is tried again
+function hubDown() {
+  hub.fails++;
+  hub.downUntil = Date.now() + Math.min(300e3, 60e3 * 2 ** Math.max(0, hub.fails - 2));
+  for (const e of streamed()) if (!e.parked) coinOpen(e, 'park');
+  clearTimeout(hub.retry);
+  hub.retry = setTimeout(hubEnsure, hub.downUntil - Date.now() + 50);
+}
+function hubSend(op, a) {
+  if (!hub.open || !a.length) return;
+  try { hub.ws.send(JSON.stringify({op, a})); } catch { /* closing */ }
+}
+function hubEnsure() {
+  clearTimeout(hub.idle);
+  if (hub.ws || !streamed().length) return;
+  if (Date.now() < hub.downUntil) { clearTimeout(hub.retry); hub.retry = setTimeout(hubEnsure, hub.downUntil - Date.now() + 50); return; }
+  const ws = new WebSocket(`${HUB_WS}/v1/stream`);
+  hub.ws = ws; hub.open = false; hub.status = null;
+  ws.onopen = () => {
+    if (hub.ws !== ws) return;
+    hub.open = true;
+    hubSend('sub', [...new Set(streamed().map((e) => e.a))]);
+    clearInterval(hub.ping);
+    hub.ping = setInterval(() => { try { ws.send('ping'); } catch { /* closing */ } }, 20e3);
+  };
+  ws.onmessage = (ev) => {
+    if (hub.ws !== ws) return;
+    let d; try { d = JSON.parse(ev.data); } catch { return; } // "pong"
+    if (d?.type === 'status') return hubStatus(d);
+    const a = d?.a && (EVM_RE.test(d.a) ? d.a.toLowerCase() : d.a);
+    if (a) for (const e of LIVE.values()) if (e.a === a && e.mode === 'stream' && !e.parked) deliver(e, d);
+  };
+  ws.onclose = () => {
+    if (hub.ws !== ws) return;
+    const was = hub.open;
+    hub.ws = null; hub.open = false; hub.status = null; hub.late = false;
+    clearInterval(hub.ping); clearTimeout(hub.lateTimer); hub.lateTimer = 0;
+    if (!streamed().length) return;
+    // never opened, or dropping again and again: intel's rooms meanwhile; one drop of a working socket: reconnect
+    if (!was || hub.fails >= 2) return hubDown();
+    hub.fails++;
+    for (const e of streamed()) if (!e.parked) deliver(e, DELAYED('reconnecting'));
+    clearTimeout(hub.retry);
+    hub.retry = setTimeout(hubEnsure, 1500);
+  };
+}
+// the hub's feed: live -> every parked coin comes back to the hub; delayed for longer than timing.liveHubDelayMs (the
+// box behind it is down) -> intel's rooms, until the hub says live again
+function hubStatus(d) {
+  hub.status = d;
+  if (!d.delayed) {
+    hub.fails = 0; hub.late = false;
+    clearTimeout(hub.lateTimer); hub.lateTimer = 0;
+    for (const e of streamed()) {
+      if (e.parked) { const ws = e.ws; e.ws = null; e.parked = false; try { ws?.close(); } catch { /* closed */ } }
+      deliver(e, d);
+    }
+    return;
+  }
+  for (const e of streamed()) if (!e.parked) deliver(e, d);
+  if (!hub.lateTimer) hub.lateTimer = setTimeout(() => {
+    hub.lateTimer = 0;
+    if (!hub.status?.delayed) return;
+    hub.late = true;
+    for (const e of streamed()) if (!e.parked) coinOpen(e, 'park');
+  }, CFG_BG?.timing?.liveHubDelayMs ?? 20e3);
+}
+function liveLeave(e) {
+  LIVE.delete(e.key);
+  const ws = e.ws;
+  e.ws = null;
+  try { ws?.close(); } catch { /* closed */ }
+  if (e.mode !== 'stream') return;
+  if (![...LIVE.values()].some((x) => x.a === e.a && x.mode === 'stream')) hubSend('unsub', [e.a]);
+  // the last streamed card gone: the hub socket closes 30 s later unless another card opens (scrolling past charts)
+  if (!streamed().length) { clearTimeout(hub.idle); hub.idle = setTimeout(() => { if (!streamed().length && hub.ws) { const w = hub.ws; hub.ws = null; hub.open = false; clearInterval(hub.ping); try { w.close(); } catch { /* closed */ } } }, 30e3); }
 }
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'live') return;
@@ -466,13 +654,21 @@ chrome.runtime.onConnect.addListener((port) => {
     if (key || !m?.address) return;
     key = `${m.chain || ''}:${m.address}`;
     let e = LIVE.get(key);
-    if (!e) { e = {ports: new Set(), ws: null, msg: m}; LIVE.set(key, e); liveOpen(key, e); }
+    if (!e) {
+      const a = EVM_RE.test(String(m.address)) ? String(m.address).toLowerCase() : String(m.address);
+      e = {key, a, msg: m, ports: new Set([port]), status: null, mode: null, parked: false, ws: null};
+      LIVE.set(key, e);
+      route(e);
+      return;
+    }
     e.ports.add(port);
+    // a second card on the same coin gets the stream's current state at once (LIVE or DELAYED)
+    if (e.status) { try { port.postMessage(e.status); } catch { /* card gone */ } }
   });
   port.onDisconnect.addListener(() => {
     const e = key && LIVE.get(key);
     if (!e) return;
     e.ports.delete(port);
-    if (!e.ports.size) { try { e.ws?.close(); } catch { /* closed */ } LIVE.delete(key); }
+    if (!e.ports.size) liveLeave(e);
   });
 });

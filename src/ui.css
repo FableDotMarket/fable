@@ -848,3 +848,57 @@ i.hx { display: inline-block; width: 10px; min-width: 10px; height: 10px; cursor
 .mv-card.alert { border-color: color-mix(in srgb, var(--red) 40%, var(--edge)); }
 .mv-alert.mv-hl6.amber { background: color-mix(in srgb, var(--amber) 9%, var(--bg)); border-color: color-mix(in srgb, var(--amber) 34%, transparent); }
 .mv-alert.mv-hl6.amber b { color: var(--amber); }
+
+/* ===== 0.26.2: nothing plays before the post is scrolled in. Keyframe animations (pill swap, why line, new stat) used to
+   run the moment prefetched data landed, off screen, and their fill overrode the hidden state above ===== */
+.fable:not(.in) .ctx.pill-new, .fable:not(.in) .why, .fable:not(.in) .mv-new, .fable:not(.in) .mv-new b, .fable:not(.in) .mv-overlap .fill { animation: none; }
+.fable:not(.in) .why { opacity: 0; }
+
+/* ===== 0.26.2: the fold. Pill and card take no height until the post is scrolled in, then the space opens under the text
+   while the content slides down into it (no blank band, no pop) ===== */
+.fold { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .5s cubic-bezier(.2,.8,.2,1); }
+.fold > div { min-height: 0; overflow: hidden; transition: opacity .3s var(--ease), transform .5s cubic-bezier(.2,.8,.2,1); }
+/* the pill and its why line arrive with the opening, not after it (their stagger delay left a growing empty band) */
+.fold .ctx { transition-delay: 0s; }
+.fold .why { animation-delay: 0s; }
+.fable:not(.in) .fold { grid-template-rows: 0fr; }
+.fable:not(.in) .fold > div { opacity: 0; transform: translateY(-10px); }
+.fable.open .fold > div { overflow: visible; }
+.fable.done .fold, .fable.done .fold > div { transition: none; }
+@media (prefers-reduced-motion: reduce) { .fold, .fold > div { transition: none !important; } }
+
+/* 0.27 charts: 1 s candles, All (from launch), zoom / pan, DELAYED badge while the live stream lags */
+.fc-live b { font: inherit; letter-spacing: inherit; }
+.fc-live.late { color: var(--amber); }
+.fc-live.late i, .fc-live.late i::after { background: var(--amber); }
+.fc-live.late i::after { animation: none; }
+.fc-ctl button[data-all] { margin-left: 2px; }
+.fc-ctl button[data-mode] { margin-left: 2px; }
+.fc-wrap canvas { touch-action: pan-y; }
+.fc-wrap canvas.drag { cursor: grabbing; }
+.fc-top { flex-wrap: wrap; row-gap: 2px; }
+.fc-ctl button { padding: 3px 5px; }
+
+/* 0.27.2 chart (owner: "display EXACTLY like Axiom / GMGN"): timeframes on top, O H L C + volume on the chart, a
+   volume pane, round price labels, range presets under it. Still the card's compact size. */
+.fc-wrap { height: 196px; border-radius: 8px; }
+.fc-legend b { font-size: 16px; line-height: 20px; font-variant-numeric: tabular-nums; }
+.fc-ctl { gap: 1px; }
+.fc-ctl button[data-tf="1s"] { margin-left: 2px; }
+.fc-ctl button[data-mode] { margin-left: 6px; padding: 3px 6px; border: 1px solid var(--line); }
+.fc-ohlc { position: absolute; left: 7px; top: 3px; pointer-events: none; display: flex; flex-direction: column; gap: 1px;
+  font: 500 10.5px/13px ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--t2); white-space: nowrap; }
+.fc-ohlc:empty { display: none; }
+.fc-ohlc > div { display: flex; align-items: baseline; gap: 2px; width: max-content; }
+.fc-ohlc .tf { margin-right: 6px; color: var(--t1); font-weight: 700; }
+.fc-ohlc i { font-style: normal; margin-right: 6px; }
+.fc-ohlc em { font-style: normal; }
+.fc-ohlc.u i, .fc-ohlc.u em { color: var(--green); } .fc-ohlc.d i, .fc-ohlc.d em { color: var(--red); }
+.fc-ohlc i.v { margin-left: 5px; } .fc-ohlc i.v.u { color: var(--green); } .fc-ohlc i.v.d { color: var(--red); }
+.fc-bot { display: flex; align-items: baseline; gap: 10px; margin-top: 5px; min-height: 18px; }
+.fc-rng { display: flex; gap: 1px; flex: none; }
+.fc-rng button { font: 600 11px ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--t2); background: none; border: 0; padding: 2px 6px; border-radius: 6px; cursor: pointer; }
+.fc-rng button:hover { color: var(--t1); } .fc-rng button.on { color: var(--t1); background: color-mix(in srgb, var(--t1) 10%, transparent); }
+.fc-rng button[hidden] { display: none; }
+.fc-bot .fc-flow { flex: 1; min-width: 0; margin-top: 0; justify-content: flex-end; font-size: 11px; }
+.fc-bot .fc-flow em { margin-left: 6px; }

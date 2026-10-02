@@ -6,7 +6,7 @@ This repository is the full source of the fable browser extension, so anyone can
 
 We are working on getting fable onto the Chrome Web Store, with a lot of updates lined up for right after it lands. Until then you install it yourself from the download on [fable.market](https://fable.market/install).
 
-Site: [fable.market](https://fable.market) · X: [@FableDotMarket](https://x.com/FableDotMarket)
+Current version: **0.27.3** · Site: [fable.market](https://fable.market) · X: [@FableDotMarket](https://x.com/FableDotMarket)
 
 ## Install (about a minute)
 
@@ -43,28 +43,38 @@ The zip is this repository's files, unchanged. You can also skip the zip entirel
 You do not have to trust us. Each check below points at the exact file and line.
 
 1. **What it is allowed to touch.** Open [`manifest.json`](manifest.json). The only permission is `storage` (your settings). It only runs on `x.com` and `twitter.com`. There is no access to other sites, tabs, history, cookies, downloads, your clipboard or your files, and Chrome enforces that list, not us.
-2. **Where it sends anything.** Search the code for `fetch(` and `WebSocket(`. Every network call is in [`src/background.js`](src/background.js) and goes to fable's own servers. The other `fetch` calls in `content.js` and `fake.js` only read files bundled inside the extension. The popup loads its font from Google Fonts.
+2. **Where it sends anything.** Search the code for `fetch(` and `WebSocket(`. Every network call is in [`src/background.js`](src/background.js) and goes to fable's own servers (`api.fable.market`, `intel.fable.market`, and `live.fable.market` for live chart trades). The other `fetch` calls in `content.js` and `fake.js` only read files bundled inside the extension. Fonts and artwork are bundled too, so the popup loads nothing from anywhere else.
 3. **No hidden code.** Search for `eval(`, `new Function` and `importScripts`: there are none. Chrome extensions on Manifest V3 cannot download and run code after install. The settings fable fetches from its server ([`src/config.js`](src/config.js)) are switches, timings and wording, never code.
 4. **How it reads X.** [`src/inject.js`](src/inject.js) wraps the page's `fetch` and `XMLHttpRequest` so it can copy X's answers for public timelines, posts and profiles (the list is the `WATCH` line). Every request and answer passes through unchanged, and it never makes a request of its own. DMs, bookmarks, notifications and account settings are not on the list.
 5. **The one cookie line.** `inject.js` and `capture.js` look at the page's cookie string and keep only `twid`: your public numeric X user id. Nothing else in it is kept or sent. fable uses that id to remove everything about you before anything leaves the page ([`src/capture.js`](src/capture.js), "drop the viewer entirely"). X's login session cookie (`auth_token`) is HttpOnly, so no page or extension script can read it at all.
 6. **The download matches this code.** Compare the zip's SHA-256 with the one on the release (see below). The zip is built straight from the tagged commit with `git archive`.
 
-What the code cannot show is what fable's servers do with what they receive. That is covered by the [privacy policy](https://fable.market/policy/).
+What the code cannot show is what fable's servers do with what they receive. That is covered by the [privacy policy](https://fable.market/privacy).
 
 ## What it can access
 
 From [`manifest.json`](manifest.json):
 
-- **Sites:** only `x.com` and `twitter.com`, plus fable's own servers (`api.fable.market`, `intel.fable.market`, and `api.fable.trading`, our old domain, kept so older settings still work).
+- **Sites:** only `x.com` and `twitter.com`, plus fable's own servers (`api.fable.market`, `intel.fable.market`, and `api.fable.trading`, our old domain, kept so older settings still work). The live chart feed is a WebSocket to `live.fable.market`.
 - **Permissions:** `storage` (your settings). Nothing else. No access to other sites, your tabs, history, cookies or downloads.
 - **No keys or wallets.** It never asks for, reads or stores a seed phrase, private key or wallet connection.
 
 ## What it sends, and what it never sends
 
 - **To look a post up:** the post's text, $tickers, links and its author's public handle go to `api.fable.market`, which answers with the label and card you see.
-- **Coin and chart data:** contract addresses from posts go to `intel.fable.market` for prices, candles and the launch history.
-- **The public database (optional):** with "Contribute to the public database" on, public posts and public accounts you scroll past are shared so fable's records stay current. It is on by default and can be switched off in the popup's Settings.
+- **Coin and chart data:** contract addresses from posts go to `intel.fable.market` for prices, candles and the launch history, and the open chart streams live trades from `live.fable.market`.
+- **Help improve Fable (optional):** with this setting on, public posts and public accounts you scroll past are shared so checks get faster for everyone. It is on by default, capped at 20,000 items a day, and can be switched off in the popup's Settings.
 - **Never sent:** your own account, your DMs, bookmarks, notifications or anything private. [`src/inject.js`](src/inject.js) reads X's timeline responses only, never changes a request, and strips everything about the signed-in user before anything leaves the page.
+
+## What it keeps on your device
+
+Everything below stays in your browser's extension storage and is never uploaded:
+
+- your settings, today's counts and the list of recently flagged posts
+- a local copy of follow lists you have viewed, and the X account you are signed in to (used only to leave you out of everything fable shares)
+- copies of fable's answers so scrolling stays fast: verdicts for up to 6 hours ([`src/background.js`](src/background.js), `VKEEP_MS`), and the last 80 contract and account lookups
+
+The **Clear** button in the popup's Account tab removes your counts, the flagged list, the follow-list copy and the linked account. Removing the extension deletes everything it stored.
 
 ## How it is laid out
 
@@ -79,7 +89,9 @@ From [`manifest.json`](manifest.json):
 | `src/verdict.js`, `src/scam.js`, `src/fake.js`, `src/officials.js`, `src/smart.js` | The local rules that give an instant first label before the server answers |
 | `src/config.js` | Default switches, timings and wording |
 | `src/ui.css` | Styles |
-| `popup.html`, `popup.js` | The toolbar popup: Home, Scan, Settings |
+| `src/smart-names.json` | Display names for the smart accounts |
+| `popup.html`, `popup.js` | The toolbar popup: Home, Scan, Settings, Account |
+| `art/`, `fonts/` | The popup's artwork and fonts, bundled so nothing loads from outside |
 
 fable's servers are not part of this repository.
 

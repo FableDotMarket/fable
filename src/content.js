@@ -54,7 +54,7 @@
       document.querySelectorAll('article[data-fable-id]').forEach((a) => { a.removeAttribute('data-fable-id'); a.removeAttribute('data-fable-done'); });
       scan();
     }
-    if (c.mode || c.apiUrl || c.demo) {
+    if (c.apiUrl) {
       VERDICTS.clear();
       document.querySelectorAll('[data-fable-host]').forEach((n) => n.remove());
       document.querySelectorAll('article[data-fable-id]').forEach((a) => { a.removeAttribute('data-fable-id'); a.removeAttribute('data-fable-done'); });
@@ -175,6 +175,19 @@
     if ((withHistory || cas.length) && h && /^[A-Za-z0-9_]{1,15}$/.test(h)) intelGet(`h:${h.toLowerCase()}`, {type: 'history', handle: h});
   };
 
+  // Fable Rep shows our own number only: lines about backers, ratings or stakes that an older API still sends are
+  // dropped, and a rep verdict keeps only smart-account faces (never the backers')
+  const REP_TRACE = /backed by|rate[sd]? them|people rate|positive|negative review|vouch|ETH staked|staking|verified human/i;
+  const cleanRep = (v) => {
+    if (!v || typeof v !== 'object') return v;
+    const out = {...v};
+    if (out.detail && REP_TRACE.test(out.detail)) delete out.detail;
+    if (out.byRep && !(out.card?.people?.length)) delete out.avatars;
+    if (out.card?.type === 'lines' && Array.isArray(out.card.lines)) out.card = {...out.card, lines: out.card.lines.filter((l) => !REP_TRACE.test(String(l)))};
+    if (Array.isArray(out.card?.rows)) out.card = {...out.card, rows: out.card.rows.map((r) => (r && r.kind === 'rep' ? {kind: 'rep', rep: r.rep, ...(r.handle ? {handle: r.handle} : {})} : r))};
+    return out;
+  };
+
   const doScan = () => {
     if (!settings.enabled || !css) return;
     for (const n of document.querySelectorAll('[data-fable-host]')) if (!n.closest('article[data-testid="tweet"]')) n.remove();
@@ -202,16 +215,23 @@
     if (need.length && on('quickVerdict')) chrome.runtime.sendMessage({type: 'quick', tweets: need}).then((res) => {
       for (const v of res?.verdicts || []) {
         if (VERDICTS.has(v.id)) continue;
-        VERDICTS.set(v.id, {...v, provisional: true});
-        const a = document.querySelector(`article[data-fable-id="${v.id}"]`);
-        if (a) render(a, VERDICTS.get(v.id));
+        VERDICTS.set(v.id, {...cleanRep(v), provisional: true});
+        // a verdict the API gave before (kept across restarts) shows at once; a fresh local guess waits a moment for the
+        // API's answer, so the pill says the right thing the first time instead of changing its words after showing
+        const show = () => {
+          const cur = VERDICTS.get(v.id);
+          const a = cur?.provisional && document.querySelector(`article[data-fable-id="${v.id}"]`);
+          if (a) render(a, cur);
+        };
+        if (v.kept) show(); else setTimeout(show, CFG.timing?.quickGraceMs ?? 600);
       }
     }).catch(() => {});
     // small batches: each one renders as soon as the API answers instead of waiting for the slowest post
     for (let k = 0; k < need.length; k += 6) {
       const chunk = need.slice(k, k + 6);
       chrome.runtime.sendMessage({type: 'verdicts', tweets: chunk}).then((res) => {
-        for (const v of res?.verdicts || []) {
+        for (const raw of res?.verdicts || []) {
+          const v = cleanRep(raw);
           const prev = VERDICTS.get(v.id);
           VERDICTS.set(v.id, v);
           PENDING.delete(v.id);
@@ -264,6 +284,9 @@
   const CHEV = '<svg viewBox="0 0 24 24" class="chev"><path d="M9.3 5.3 7.9 6.7l5.3 5.3-5.3 5.3 1.4 1.4 6.7-6.7-6.7-6.7Z"/></svg>';
   const icon = (k) => `<svg viewBox="0 0 24 24" class="ic">${ICON[k] || ''}</svg>`;
   const av = (src, cls = 'av') => (src ? `<img class="${cls}" src="${esc(src)}" alt="">` : `<span class="${cls} ph"></span>`);
+  // Fable Rep shows our own number only; the full account check lives on fable.market
+  const REP_SOURCE = "Scored by Fable's private reputation database";
+  const rateLink = (h) => (h ? `https://fable.market/check?q=${encodeURIComponent(h)}` : 'https://fable.market/check');
   const i = (n) => `style="--i:${n}"`;
   const ofN = (stat) => {
     const m = String(stat || '').match(/(\d+)\s*\/\s*(\d+)/);
@@ -308,7 +331,7 @@
     // a verdict label can be renamed from the remote config (copy.labels)
     if (CFG.copy?.labels?.[v.label]) v = {...v, label: CFG.copy.labels[v.label]};
     const pile = (v.card?.people || []).slice(0, 3).map((p) => p.avatar).filter(Boolean);
-    const faces = (v.faces || (pile.length ? pile : v.avatars || [])).slice(0, 3);
+    const faces = (v.faces || (pile.length ? pile : v.avatars || [])).filter(Boolean).slice(0, 3); // no picture on file = no face, never an empty circle
     const d = v.tone === 'neutral' && !v.detail ? '' : detail(v);
     return `
       <div class="ctx ${v.tone} ${v.card?.rows ? 'tap' : ''}" data-k="0" ${i(0)}>
@@ -368,16 +391,12 @@
       const extra = row.n - row.people.length;
       return wrap('good', `Followed by ${row.n} smart account${row.n > 1 ? 's' : ''}`,
         row.people.slice(0, 3).map((p) => `${esc(p.name)}${p.tag ? ` <i>${esc(p.tag)}</i>` : ''}`).join(' · '),
-        `<span class="pile lg">${row.people.map((p) => av(p.avatar, 'face')).join('')}${extra > 0 ? `<span class="more">+${extra}</span>` : ''}</span>`);
+        `<span class="pile lg">${row.people.filter((p) => p.avatar).map((p) => av(p.avatar, 'face')).join('')}${extra > 0 ? `<span class="more">+${extra}</span>` : ''}</span>`);
     }
     if (row.kind === 'rugs')
       return wrap('bad', `Linked to ${row.n} rugged token${row.n > 1 ? 's' : ''}`, `${esc(row.how)} · ${row.tokens.map((x) => `<s>${esc(x)}</s>`).join(' ')}`, `<span class="big red">${num(String(row.n))}</span>`);
-    if (row.kind === 'rep') {
-      const faces = (row.vouchers || []).filter((p) => p.avatar).slice(0, 3);
-      return wrap(row.score >= 1600 ? 'good' : row.score < 800 ? 'bad' : 'muted', `Reputation ${row.rep ?? '?'}/100`,
-        `backed by ${row.vouches} ${row.vouches === 1 ? 'person' : 'people'}${row.vouchEth ? ` · ${row.vouchEth.toFixed(2)} ETH staked` : ''} · ${row.positive.toLocaleString('en-US')} positive, ${row.negative} negative`,
-        faces.length ? `<span class="pile lg">${faces.map((p) => av(p.avatar, 'face')).join('')}${row.vouches > faces.length ? `<span class="more">+${row.vouches - faces.length}</span>` : ''}</span>` : '');
-    }
+    if (row.kind === 'rep')
+      return wrap(row.rep >= 75 ? 'good' : row.rep < 40 ? 'bad' : 'muted', `Fable Rep ${row.rep ?? '?'}/100`, REP_SOURCE, '');
     if (row.kind === 'engaged') {
       const b = row.boosters, d = row.discussed;
       const faces = [...b, ...d].filter((p) => p.avatar).slice(0, 3);
@@ -451,6 +470,7 @@
     if (!root || root.classList.contains('in')) return;
     io.unobserve(host);
     root.classList.add('in');
+    setTimeout(() => root.classList.add('open'), 600); // fold finished: stop clipping shadows and popovers
     countUp(root);
     const article = host.closest('article');
     if (host.dataset.fableHost === 'stamp' && article) {
@@ -461,21 +481,27 @@
     if (host.dataset.fableHost === 'ui' && article?.dataset.fableWantsFade && !article.querySelector('[data-fable-host="stamp"]')) article.setAttribute('data-fable-fade', '1');
     if (article?.dataset.fableId) PLAYED.add(article.dataset.fableId);
   };
+  // the reveal line: an entrance plays once its top passes 78% down the screen, so it unfolds where the eye is, not
+  // below the fold (it used to fire at the very bottom edge and was already open by the time the post was read)
+  const REVEAL = 0.78;
   const onScreen = (el) => {
     const r = el.getBoundingClientRect();
-    return r.bottom > 0 && r.top < innerHeight * 0.92 && r.right > 0 && r.left < innerWidth;
+    return r.bottom > 0 && r.top < innerHeight * REVEAL && r.right > 0 && r.left < innerWidth;
   };
   // Trigger 1: scrolled into view. Trigger 2 (in mountShadow): already on screen when rendered,
   // which IntersectionObserver can miss when a node is swapped in place.
   const io = new IntersectionObserver((entries) => {
     for (const en of entries) if (en.isIntersecting) play(en.target);
-  }, {threshold: 0.35});
+  }, {rootMargin: `0px 0px -${Math.round((1 - REVEAL) * 100)}% 0px`, threshold: 0});
 
   // a logo that fails to load (slow IPFS links) disappears instead of showing a broken-image icon
-  const hideBroken = (root) => root.querySelectorAll('img').forEach((im) => im.addEventListener('error', () => { if (im.matches('.mv-logo, .tl, .fox')) im.remove(); else im.style.visibility = 'hidden'; }, {once: true}));
+  const hideBroken = (root) => root.querySelectorAll('img').forEach((im) => im.addEventListener('error', () => { if (im.matches('.mv-logo, .tl, .fox, .face')) im.remove(); else im.style.visibility = 'hidden'; }, {once: true}));
   const mountShadow = (host, html, t, played, v) => {
     const root = host.attachShadow({mode: 'open'});
-    root.innerHTML = `${styleFor(root)}<div class="fable ${t} ${played ? 'in done' : ''}">${html}</div>`;
+    // the pill and the card take no room until they play, then slide down out from under the post text
+    // (hidden but laid out, they left a blank band under the text)
+    const fold = host.dataset.fableHost === 'ui' || host.dataset.fableHost === 'intel';
+    root.innerHTML = `${styleFor(root)}<div class="fable ${t} ${played ? 'in done open' : ''}">${fold ? `<div class="fold"><div>${html}</div></div>` : html}</div>`;
     hideBroken(root);
     if (!played) {
       io.observe(host);
@@ -496,7 +522,7 @@
 
   /* ---------------- Detail sheet (X-style dialog) ---------------- */
 
-  const SHEET_TITLES = {history: 'History', contract: 'Contract', engaged: 'Smart engagement', rep: 'Reputation', calls: 'Call record', flags: 'Red flags', smart: 'Smart followers', rugs: 'Linked rugs', paid: 'Promotion record', dev: 'Builder history', identity: 'Handle history', fresh: 'Account age', doxxed: 'Identity', anon: 'Identity', thesis: 'Thesis', token: 'Contract scan'};
+  const SHEET_TITLES = {history: 'History', contract: 'Contract', engaged: 'Smart engagement', rep: 'Fable Rep', calls: 'Call record', flags: 'Red flags', smart: 'Smart followers', rugs: 'Linked rugs', paid: 'Promotion record', dev: 'Builder history', identity: 'Handle history', fresh: 'Account age', doxxed: 'Identity', anon: 'Identity', thesis: 'Thesis', token: 'Contract scan'};
 
   const TONE = {bad: 'red', warn: 'amber', good: 'green', muted: ''};
 
@@ -605,15 +631,20 @@
         ${row.discussed.length ? `<p class="lead" style="margin-top:14px"><b>Discussed by</b></p>${row.discussed.map(line).join('')}` : ''}`;
     }
     if (row.kind === 'rep')
-      return `<p class="lead">Reputation <b>${row.rep ?? '?'}/100</b>${row.human ? ' · <b class="green">verified human</b>' : ''}. <b>${row.positive.toLocaleString('en-US')}</b> positive and <b class="${row.negative ? 'red' : ''}">${row.negative}</b> negative reviews. Backed by <b>${row.vouches}</b> ${row.vouches === 1 ? 'person' : 'people'}${row.vouchEth ? ` staking <b>${row.vouchEth.toFixed(2)} ETH</b>` : ''}.</p>
-        ${(row.vouchers || []).map((p, n) => `<a class="line" href="https://x.com/${esc(p.handle)}" target="_blank" rel="noopener" style="--i:${n}">${av(p.avatar, 'lav')}<div class="who"><b>${esc(p.name || p.handle)}</b><span>@${esc(p.handle)}</span></div><div class="meta"><span>Rep ${p.rep ?? '?'}</span><span class="dim">${p.eth ? `${p.eth.toFixed(3)} ETH staked` : 'backs them'}</span></div></a>`).join('')}`;
+      return `<p class="lead">Fable Rep <b>${row.rep ?? '?'}/100</b>. ${REP_SOURCE}.</p>
+        <div class="tk-acts"><a class="th-srcb" href="${esc(rateLink(row.handle))}" target="_blank" rel="noopener">${row.handle ? `Check @${esc(row.handle)} on fable.market` : 'Check an account on fable.market'}</a></div>`;
     if (row.kind === 'calls')
       return `<p class="lead"><b>${row.total}</b> token calls graded against real prices. <b class="red">${row.dead}</b> fell 85% or more, <b class="green">${row.winners}</b> went 2x or more.</p>
         <div class="table four"><div class="th"><span>Token</span><span></span><span></span><span>Best after call</span></div>
         ${(row.list || []).map((x, n) => `<div class="tr" style="--i:${n}"><span><b>${esc(x.tk)}</b></span><span></span><span></span><span class="${x.pct < 0 ? 'red' : 'green'}"><b>${x.pct > 0 ? '+' : ''}${x.pct}%</b></span></div>`).join('')}</div>`;
-    if (row.kind === 'flags')
-      return `<p class="lead"><b class="${row.tone === 'kol' ? 'amber' : 'red'}">${esc(row.title)}</b>. Everything below was observed on-chain or in public posts.</p>
-        ${row.lines.map((x, n) => `<div class="line" style="--i:${n}"><span class="dot ${row.tone === 'kol' ? 'a' : ''}" style="${row.tone === 'kol' ? '' : 'background:var(--red)'}"></span><div class="who"><b style="font-weight:500;white-space:normal">${esc(x)}</b></div></div>`).join('')}`;
+    if (row.kind === 'flags') {
+      // a Fable-confirmed entry (fable.market submission Fable reviewed) says so; everything else is chain or public posts
+      const confirmed = row.lines.some((x) => /^Reviewed and confirmed by Fable/.test(x));
+      const cls = row.tone === 'kol' ? 'amber' : row.tone === 'legit' ? 'green' : 'red';
+      const dot = row.tone === 'kol' ? 'var(--amber)' : row.tone === 'legit' ? 'var(--green)' : 'var(--red)';
+      return `<p class="lead"><b class="${cls}">${esc(row.title)}</b>. ${confirmed ? 'Submitted on fable.market, then reviewed and confirmed by Fable against the evidence.' : 'Everything below was observed on-chain or in public posts.'}</p>
+        ${row.lines.map((x, n) => `<div class="line" style="--i:${n}"><span class="dot" style="background:${dot}"></span><div class="who"><b style="font-weight:500;white-space:normal">${esc(x)}</b></div></div>`).join('')}`;
+    }
     return '';
   };
 
@@ -636,6 +667,8 @@
     // History tab for the post's author (owner #236): fetched once per card, then kept on the verdict
     const handle = v.id && TWEETS.get(v.id)?.author?.handle;
     if (handle && !rows.some((r) => r.kind === 'history')) rows.push(v._hist ||= {kind: 'history', state: 'idle', handle});
+    const who = handle || (String(v.id || '').startsWith('profile:') ? String(v.id).slice(8) : null);
+    for (const r of rows) if (r.kind === 'rep' && !r.handle && who) r.handle = who;
     if (!rows.length) return {repaint: () => {}};
     if (k === 'history') cur = Math.max(0, rows.findIndex((r) => r.kind === 'history'));
     sheetHost = document.createElement('div');
@@ -1209,6 +1242,7 @@
     }).catch(() => {});
   };
   const whoAmI = () => {
+    if (!chrome.runtime?.id) return clearInterval(whoAmITimer); // extension reloaded under this tab: this copy is orphaned
     const a = document.querySelector('a[data-testid="AppTabBar_Profile_Link"]');
     const handle = a?.getAttribute('href')?.replace('/', '');
     if (!handle) return;
@@ -1220,7 +1254,7 @@
     }).catch(() => {});
   };
   setTimeout(whoAmI, 4000);
-  setInterval(whoAmI, 60000);
+  const whoAmITimer = setInterval(whoAmI, 60000);
 
   /* ---------------- Inline card, video style (owner #247 / #254): open on the post as it scrolls in, no click ----------------
      One card per post, picked from what Fable really holds: the contract in the post, the smart accounts behind the author,
@@ -1512,7 +1546,7 @@
     const chips = named || (h.builds || []).slice(0, 4).map((b, n) => `<a class="mv-chip" href="${esc(b.url)}" target="_blank" rel="noopener" ${i(2 + n)}>✓ ${esc(b.name)}</a>`).join('');
     const days = h.counts?.building || 0;
     return mvCard('builder', mvHead('Builder history'),
-      `${readHtml(builderRead(h))}<div class="mv-chips">${chips}<span class="mv-aside" ${i(3)}>${h.github?.total ? `${builderRead(h) && h.github.weeks?.length ? `active ${ghActive(h.github)} of ${Math.min(h.github.weeks.length, HEAT_ROWS * HEAT_COLS)} weeks` : `${h.github.total.toLocaleString('en-US')} commits this year`}${h.github.firstActive ? ` · since ${h.github.firstActive.slice(0, 4)}` : ''}` : `${h.profile?.yearsOnX ? `${h.profile.yearsOnX} yrs on X · ` : ''}${days} build day${days === 1 ? '' : 's'}`}</span></div>${h.github?.weeks?.length ? `${ghHeat(h.github)}${ghKey}` : mvHeat(h.days)}${h.smart?.n ? `<div class="mv-foot" ${i(10)}><span class="mv-mini">${(h.smart.people || []).slice(0, 3).map((p) => av(p.avatar, 'face')).join('')}Followed by ${h.smart.n} smart account${h.smart.n === 1 ? '' : 's'}</span><span></span></div>` : ''}`);
+      `${readHtml(builderRead(h))}<div class="mv-chips">${chips}<span class="mv-aside" ${i(3)}>${h.github?.total ? `${builderRead(h) && h.github.weeks?.length ? `active ${ghActive(h.github)} of ${Math.min(h.github.weeks.length, HEAT_ROWS * HEAT_COLS)} weeks` : `${h.github.total.toLocaleString('en-US')} commits this year`}${h.github.firstActive ? ` · since ${h.github.firstActive.slice(0, 4)}` : ''}` : `${h.profile?.yearsOnX ? `${h.profile.yearsOnX} yrs on X · ` : ''}${days} build day${days === 1 ? '' : 's'}`}</span></div>${h.github?.weeks?.length ? `${ghHeat(h.github)}${ghKey}` : mvHeat(h.days)}${h.smart?.n ? `<div class="mv-foot" ${i(10)}><span class="mv-mini">${(h.smart.people || []).filter((p) => p.avatar).slice(0, 3).map((p) => av(p.avatar, 'face')).join('')}Followed by ${h.smart.n} smart account${h.smart.n === 1 ? '' : 's'}</span><span></span></div>` : ''}`);
   };
 
   const activityCard = (h) => mvCard('activity', mvHead('Track record'), `${recordChips(h, 2)}${authorFactsHtml(h, 3)}${mvHeat(h.days)}`);
@@ -1520,7 +1554,7 @@
   const smartCard = (row, ships = []) => {
     const people = (row.all || row.people || []).slice(0, 3);
     const shipChips = ships?.length ? `<div class="mv-chips" style="margin-bottom:6px">${ships.slice(0, 4).map((x, n) => `<span class="mv-chip" ${i(1.5 + n * 0.3)}>✓ ${esc(x)}</span>`).join('')}</div>` : '';
-    const just = row.recent?.length ? `<div class="mv-just" ${i(2)}><span class="pile">${row.recent.slice(0, 3).map((p) => av(p.avatar, 'face')).join('')}</span>Just followed by ${esc(handleList(row.recent))}</div>` : '';
+    const just = row.recent?.length ? `<div class="mv-just" ${i(2)}><span class="pile">${row.recent.filter((p) => p.avatar).slice(0, 3).map((p) => av(p.avatar, 'face')).join('')}</span>Just followed by ${esc(handleList(row.recent))}</div>` : '';
     const overlap = row.topPct ? `<div class="mv-overlap" ${i(6)}><span>OVERLAP</span><span class="track"><span class="fill" style="--w:${Math.max(8, 100 - row.topPct)}%"></span></span><b>Top ${row.topPct}% of accounts Fable tracks</b></div>` : '';
     return mvCard('smart', mvHead(`Followed by ${row.n || people.length} smart account${(row.n || people.length) === 1 ? '' : 's'}`),
       shipChips + just + people.map((p, n) => `<a class="mv-person" href="https://x.com/${esc(p.handle)}" target="_blank" rel="noopener" ${i(2 + n)}>${av(p.avatar, 'pav')}<b>${esc(p.name || p.handle)}</b>${p.verified ? '<svg class="vbadge" viewBox="0 0 22 22" aria-label="Verified"><path d="M20.4 11c0-1.4-.8-2.6-2-3.2.4-1.3.1-2.8-.9-3.8s-2.5-1.3-3.8-.9C13.1 1.9 11.9 1.1 10.5 1.1S7.9 1.9 7.3 3.1c-1.3-.4-2.8-.1-3.8.9s-1.3 2.5-.9 3.8C1.4 8.4.6 9.6.6 11s.8 2.6 2 3.2c-.4 1.3-.1 2.8.9 3.8s2.5 1.3 3.8.9c.6 1.2 1.8 2 3.2 2s2.6-.8 3.2-2c1.3.4 2.8.1 3.8-.9s1.3-2.5.9-3.8c1.2-.6 2-1.8 2-3.2Z" fill="#1d9bf0"/><path d="m9.4 14.6-3.3-3.3 1.4-1.4 1.9 1.9 5-5 1.4 1.4-6.4 6.4Z" fill="#fff"/></svg>' : ''}<span>@${esc(p.handle)}</span>${(p.tag || p.category) && !/^(other|smart)$/i.test(p.tag || p.category) ? `<em class="mv-tag">${esc(p.tag || p.category)}</em>` : ''}</a>`).join('')
@@ -1531,13 +1565,14 @@
   let lastActive = Date.now();
   for (const ev of ['scroll', 'wheel', 'mousemove', 'keydown', 'touchstart']) window.addEventListener(ev, () => { lastActive = Date.now(); }, {passive: true, capture: true});
   // candles are asked for the moment a contract is seen (in parallel with the card's own data), so the chart paints
-  // with the card; the server picks the candle size from the coin's age ('auto': 15 s for a fresh launch)
+  // with the card; the server picks the candle size from the coin's age ('auto'), and the chart opens a coin younger than
+  // 5 minutes on 1 s candles
   // one candles read per coin and timeframe for 8 s: the prefetch and the card's chart share it
   const CANDLES = new Map();
-  const candlesFor = (address, chain, tf = 'auto') => {
-    const k = `${chain || ''}:${address}:${tf}`, hit = CANDLES.get(k);
+  const candlesFor = (address, chain, tf = 'auto', from = null) => {
+    const k = `${chain || ''}:${address}:${tf}:${from || ''}`, hit = CANDLES.get(k);
     if (hit && performance.now() - hit.at < (CFG.timing?.candlesCacheMs ?? 8000)) return hit.p;
-    const p = chrome.runtime.sendMessage({type: 'candles', address, chain, tf}).catch(() => null);
+    const p = chrome.runtime.sendMessage({type: 'candles', address, chain, tf, ...(from ? {from} : {})}).catch(() => null);
     CANDLES.set(k, {at: performance.now(), p});
     if (CANDLES.size > 200) CANDLES.delete(CANDLES.keys().next().value);
     return p;
@@ -1546,9 +1581,10 @@
     const st = {api: null, data: null, tf: 'auto', port: null, visible: false};
     const address = c.identity?.address, chain = c.identity?.chains?.[0] || c.identity?.chainBasis || null;
     // the card's market cap follows the chart it sits under: last trade x supply, the number the chart's MC axis shows
-    // (the card said $12K under a live chart at $10.9K: the median of 7 prints vs the last one)
+    // (the card said $12K under a live chart at $10.9K: the median of 7 prints vs the last one). Once a frame at most.
     const born = performance.now();
-    const setCap = (p) => {
+    let capP = 0, capRaf = 0;
+    const applyCap = (p) => {
       const sup = st.data?.supply, b = root.querySelector('.mv-stat[data-k="mcap"] b');
       if (!b || !(p > 0) || !(sup > 0)) return;
       const v = mvUsd(p * sup);
@@ -1556,19 +1592,33 @@
       const wait = 900 - (performance.now() - born); // after the count-up animation
       if (wait > 0) setTimeout(apply, wait); else apply();
     };
-    const load = async (pre = null) => {
-      const d = await (pre || candlesFor(address, chain, st.tf));
-      if (d?.tf) st.tf = d.tf;
-      // a chart as soon as there is anything to draw, or a live coin still waiting for its first trade
-      if (d?.candles?.length >= 2 || (d?.live && (d.candles?.length || 0) < 2 && d.stored != null)) { st.data = d; st.api?.setData(d); root.querySelector('.mv-fc')?.classList.remove('empty'); const last = d.candles?.[d.candles.length - 1]; if (last) setCap(last[4]); }
-      else root.querySelector('.mv-fc')?.classList.add('empty');
+    const setCap = (p) => { capP = p; if (!capRaf) capRaf = requestAnimationFrame(() => { capRaf = 0; applyCap(capP); }); };
+    const box = () => root.querySelector('.mv-fc');
+    // a chart as soon as there is anything to draw: one candle, one trade (its bubble), or a live coin waiting for its first trade
+    const has = (d) => !!(d && (d.candles?.length || d.trades?.length || (d.live && d.stored != null)));
+    const load = async (pre = null, tf = st.tf, from = null) => {
+      const d = await (pre || candlesFor(address, chain, tf, from));
+      if (has(d)) {
+        if (d.tf) st.tf = d.tf;
+        st.data = d; st.api?.setData(d); box()?.classList.remove('empty');
+        const lc = d.candles?.[d.candles.length - 1], lt = d.trades?.[d.trades.length - 1];
+        if (lc || lt) setCap(lc ? lc[4] : lt[1]);
+      } else if (!st.data) box()?.classList.add('empty');
+    };
+    // older candles for zoom / pan / All (from, to in ms); the chart puts them in front of what it holds
+    const range = async (q) => {
+      const d = await chrome.runtime.sendMessage({type: 'candles', address, chain, tf: q.tf, from: q.from, to: q.to}).catch(() => null);
+      st.api?.merge(d, q);
     };
     const mount = () => {
-      const el = root.querySelector('.mv-fc');
+      const el = box();
       if (!el || !globalThis.FableChart) return;
+      // a remount (the card redrawn while the chain is read) keeps the chart's candles, live trades and timeframe
+      const keep = st.api?.save?.();
       st.api?.destroy();
-      st.api = FableChart.mount(el, {tf: st.tf, postTime: tweetTime, onTf: (tf) => { st.tf = tf; load(); }});
-      if (st.data) st.api.setData(st.data); else { load(first); first = null; }
+      const la = c.deployment?.launchedAt, born = typeof la === 'number' ? la : Date.parse(la || '') || null; // launch time: 1 s candles for a fresh coin, the floor of All
+      st.api = FableChart.mount(el, {tf: st.tf, postTime: tweetTime, born, restore: keep, onTf: (tf, o) => load(null, tf, o?.from || null), onRange: range});
+      if (keep && st.data) { /* restored */ } else if (st.data) st.api.setData(st.data); else { load(first); first = null; }
       if (st.port) st.api.setLive(true);
     };
     const hostEl = root.host;
@@ -1577,7 +1627,11 @@
       if (want && !st.port) {
         st.port = chrome.runtime.connect({name: 'live'});
         st.port.postMessage({address, chain});
-        st.port.onMessage.addListener((msg) => { if (msg.type === 'status') st.api?.setLive(!!msg.live); else if (msg.p) { st.api?.push(msg); setCap(msg.p); } });
+        // trades and ticks ({p}), {type:'status', live, delayed} and {type:'void', tx}: the chart batches them per frame
+        st.port.onMessage.addListener((msg) => {
+          st.api?.live(msg);
+          if (msg?.p > 0 && msg.type !== 'void') { setCap(msg.p); const el = box(); if (el?.classList.contains('empty')) el.classList.remove('empty'); }
+        });
         st.port.onDisconnect.addListener(() => { st.port = null; st.api?.setLive(false); });
       } else if (!want && st.port) { st.port.disconnect(); st.port = null; st.api?.setLive(false); }
     };
@@ -1662,6 +1716,7 @@
     // no contract in the post: its first non-major $TICKER, matched server-side to the contract Fable has seen most
     const tick = !cas.length ? (tw?.cashtags || []).map((x) => String(x).toUpperCase()).find((x) => !MAJORS.has(x)) : null;
     if (!handle && !cas.length && !tick) return;
+    if (/^fabledotmarket$/i.test(handle || '')) return; // our own account never gets a card (verdict.js FABLE_SELF)
     const list = cas.length ? cas : tick ? [{ticker: tick, chain: globalThis.FableCapture?.chainHintFromText?.(tw?.text || '') || null}] : [];
     const cmsg = (ca, fresh) => ({...(ca.ticker ? {type: 'contract', symbol: ca.ticker} : {type: 'contract', address: ca.address}), chain: ca.chain, fresh, tweet: v.id});
     const ckey = (ca) => (ca.ticker ? `t:${ca.ticker}:${ca.chain || ''}` : `c:${ca.chain}:${ca.address}`);
@@ -1846,7 +1901,7 @@
   const upgradeHidden = async (article, v) => {
     const tw = TWEETS.get(v.id);
     const handle = tw?.author?.handle || article.querySelector('[data-testid="User-Name"] a[href^="/"]')?.getAttribute('href')?.slice(1);
-    if (!handle || !/^[A-Za-z0-9_]{1,15}$/.test(handle)) return;
+    if (!handle || !/^[A-Za-z0-9_]{1,15}$/.test(handle) || /^fabledotmarket$/i.test(handle)) return;
     const h = await intelGet(`h:${handle.toLowerCase()}`, {type: 'history', handle});
     if (!h || h.error || article.getAttribute('data-fable-done') !== v.id || article.querySelector('[data-fable-host]')) return;
     const sm = h.smart?.n || 0, builds = h.builds?.length || 0;
@@ -1883,6 +1938,9 @@
     else delete article.dataset.fableWantsFade;
     if (v.fade && settings.fade && played) article.setAttribute('data-fable-fade', '1');
     mountShadow(host, ctxHTML(v) + (settings.cards && important(v) ? cardHTML(v.card) : ''), t, played, v);
+    // Fable's own posts get the OFFICIAL line and nothing else: no card, underlines or stamp (the coins we name when
+    // exposing a rug read as "coins called" in a promotion card)
+    if (v.self) return;
     if (settings.intel && on('cards')) mountIntel(article, host, v, t, played).catch((e) => console.error('fable card', e?.message));
     if (textEl && settings.tokenMarks && on('tokenMarks')) markTokens(article, v, textEl, t);
     if (v.stamp && settings.stamps && on('stamps')) stampFromVerdict(article, v, t, played, textEl, host);
@@ -1913,13 +1971,14 @@
   // The API verdict arrived after the instant local one: change only what differs, in place (the card stays put).
   const sameVerdict = (a, b) => a.tone === b.tone && a.label === b.label && (a.stamp || '') === (b.stamp || '') && (a.detail || '') === (b.detail || '') && !!a.hidden === !!b.hidden;
   const upgrade = (article, prev, v) => {
-    if (sameVerdict(prev, v) || !settings.enabled) return;
+    if (!settings.enabled) return;
     const ui = article.querySelector('[data-fable-host="ui"]');
-    // the local verdict drew nothing (not a crypto post): draw the API verdict now
+    // nothing drawn yet (the guess was still waiting, or it drew nothing): draw the API verdict now
     if (!ui) {
       if (!article.querySelector('[data-fable-host]')) { article.removeAttribute('data-fable-done'); render(article, v); }
       return;
     }
+    if (sameVerdict(prev, v)) return;
     if (v.hidden) return; // a post already showing a fact keeps it
     const ctx = ui.shadowRoot?.querySelector('.ctx');
     // a pill set from the chain or a caller rank is a harder fact than a text verdict, except a scam call

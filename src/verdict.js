@@ -2,6 +2,7 @@
 // A verdict is what the UI renders under a tweet:
 // { id, tone: 'legit'|'rug'|'kol'|'neutral', label, stat, confidence, stamp?, fade?, card?, source }
 import {scamCheck} from './scam.js';
+import {ORGS, OFFICIAL_ALTS, OFFICIAL_TOKENS, PROTECTED_TICKERS} from './officials.js';
 
 // ---------------------------------------------------------------------------
 // Jev (TypeSafe System One, jev-1.13) question set. One call per post, every question answered in parallel.
@@ -324,7 +325,7 @@ export const isCryptoPost = (t) => (t.cashtags?.length || 0) > 0 || CRYPTO.test(
 // Crypto accounts count even when a single post has no crypto words ("Gud luck." from an NFT project).
 const ACCT = /(nft|crypto|onchain|web3|defi|dao|token|coin|protocol|swap|dex|wallet|degen|memecoin|\.eth\b|eth\b|sol\b|btc\b)/i;
 export const isCryptoAccount = (a) => !!a && (ACCT.test(`${a.handle || ''} ${a.name || ''}`) || CRYPTO.test(a.description || '') || /\bnfts?\b|\.eth\b|\$[A-Za-z]{2,}/i.test(a.description || ''));
-export const isCryptoContext = (t, facts = {}) => isCryptoPost(t) || isCryptoAccount(t.author) || (facts.smart?.length || 0) > 0 || !!facts.calls || !!facts.handles || !!facts.ethos || !!facts.engaged || !!facts.kolWatch || !!facts.opRoles || !!facts.trusted || facts.kolPush?.n >= 2;
+export const isCryptoContext = (t, facts = {}) => isCryptoPost(t) || isCryptoAccount(t.author) || (facts.smart?.length || 0) > 0 || !!facts.calls || !!facts.handles || !!facts.rating || !!facts.engaged || !!facts.kolWatch || !!facts.opRoles || !!facts.trusted || facts.kolPush?.n >= 2 || !!facts.curated?.length;
 // Verified businesses and governments are never flagged from text guesses, only from hard on-chain evidence.
 export const isOrg = (t) => ['Business', 'Government'].includes(t.author?.vtype);
 const DAY_MS = 864e5;
@@ -343,14 +344,157 @@ export const establishedOrg = (t, facts = {}) => {
 const LAUNCH = /(\btoken\b|\bcontract\b|\bca\b|now live|is live|live on|launch(ed|ing)?\b|stealth|fair ?launch|liquidity|total supply|tokenomics|airdrop)/i;
 export const tokenAnnouncement = (t) => ((t.cashtags?.length || 0) > 0 || RX.ca.test(`${t.text || ''}`)) && LAUNCH.test(`${t.text || ''}`);
 
-/** Pure: a lite token scan -> the small token record verdicts use. pending = new token whose on-chain read is still queued. */
-export function tokenFacts(tok) {
-  if (!tok?.found) return null;
+// ---------------------------------------------------------------------------
+// Official and established coins (owner rule 2026-10-02, after the $PONS and $ZEC false positives).
+// Who posted a coin and when (scam-KOL list mentions, promotion rings, co-posting waves) is a fact about the posters,
+// never proof about the coin. On a coin that has proven itself those signals are neutral facts, not a verdict:
+//   official     a launchpad or protocol token vouched for by hand (officials.js OFFICIAL_TOKENS, exact address): no
+//                automated token rule turns it red or amber; what Fable read stays visible as neutral lines
+//   established  30+ days old with $1M+ liquidity: promotion signals are neutral; on-chain proof about the exact
+//                contract (a bundle, a honeypot, a tracked rug operation, pulled liquidity) still counts
+// Young coins are read as before. A copy of a protected ticker on another contract is judged on its own evidence.
+// ---------------------------------------------------------------------------
+export const ESTABLISHED = {minAgeDays: 30, minLiqUsd: 1e6};
+const normAddr = (a) => (/^0x/i.test(String(a)) ? String(a).toLowerCase() : String(a)); // Solana addresses are case-sensitive
+const OFFICIAL_BY_ADDRESS = new Map(OFFICIAL_TOKENS.map(([chain, address, symbol, what, handles]) => [address.toLowerCase(), {chain, address: address.toLowerCase(), symbol, what, handles: handles.split(/\s+/).filter(Boolean)}]));
+const OFFICIAL_HANDLES = new Set([...OFFICIAL_TOKENS.flatMap((x) => x[4].split(/\s+/)), ...ORGS.map((o) => o[0]), ...OFFICIAL_ALTS].filter(Boolean).map((h) => h.toLowerCase()));
+const PROTECTED = new Set(PROTECTED_TICKERS.map((s) => s.toUpperCase()));
+/** Pure: the official token record ({chain, address, symbol, what, handles}) for a contract address, or null. */
+export const officialToken = (address) => (address ? OFFICIAL_BY_ADDRESS.get(String(address).toLowerCase()) || null : null);
+/** Pure: the official token whose own account this is (@ponsdotfamily -> $PONS), or null. */
+export const officialTokenOf = (handle) => { const h = String(handle || '').replace(/^@/, '').toLowerCase(); return [...OFFICIAL_BY_ADDRESS.values()].find((x) => x.handles.some((k) => k.toLowerCase() === h)) || null; };
+/** Pure: an official account: a protected token's own accounts, or an organisation in officials.js. */
+export const officialHandle = (h) => OFFICIAL_HANDLES.has(String(h || '').replace(/^@/, '').toLowerCase());
+/** Pure: a ticker that means an established coin when the post names no contract ($ZEC = Zcash). */
+export const protectedTicker = (s) => PROTECTED.has(String(s || '').replace(/^\$/, '').toUpperCase());
+/** Pure: {address, ageDays, liquidityUsd} -> 'official' | 'established' | null (young or unknown). */
+export function tokenStanding({address, ageDays, liquidityUsd} = {}) {
+  if (officialToken(address)) return 'official';
+  return ageDays >= ESTABLISHED.minAgeDays && liquidityUsd >= ESTABLISHED.minLiqUsd ? 'established' : null;
+}
+// a token scan's promotion reasons (api scan/token.js judgeScan): who pushed the coin, never what the contract is
+export const PROMO_REASON = /^Pushed by \d+ accounts? from (?:known promotion rings|a known scam KOL group)\b|^\d+ of its promoters have mostly dead calls\b/;
+const neutralLine = (text) => String(text || '').replace(/\.$/, '')
+  .replace(/^Pushed by (\d+) accounts? from known promotion rings/, '$1 of its posters are in promotion rings Fable tracks')
+  .replace(/^Pushed by (\d+) accounts? from a known scam KOL group in the last 7 days/, '$1 accounts on public scam-KOL lists posted it this week')
+  .replace(/^(\d+) of its promoters have mostly dead calls/, '$1 of its posters have mostly dead calls');
+
+/**
+ * Pure: a token scan read with the standing rule above. Official: every automated reason becomes a neutral line (strength
+ * 'weak', grey in the card) and the level is 'ok'. Established: the promotion reasons become neutral lines and the level
+ * is set again from what is left (strong -> danger, anything else -> caution: the bump judgeScan uses). The scam-KOL
+ * mention count moves from promoters.kolPush (drawn as a red line) to promoters.kolMentions. Young coins come back as
+ * they were. opts.bySymbol: a $TICKER lookup with no contract in the post, so a protected ticker means the established coin.
+ */
+export function guardScan(tok, {bySymbol = false} = {}) {
+  if (!tok?.found || tok.standing) return tok;
+  const standing = tokenStanding({address: tok.address, ageDays: tok.ageHours != null ? tok.ageHours / 24 : null, liquidityUsd: tok.liquidityUsd})
+    || (bySymbol && protectedTicker(tok.symbol) ? 'established' : null);
+  if (!standing) return tok;
+  const official = standing === 'official';
+  const reasons = tok.reasons || [];
+  const promo = (r) => official || PROMO_REASON.test(String(r?.text || ''));
+  const kept = reasons.filter((r) => !promo(r));
+  const moved = reasons.filter(promo).map((r) => ({text: neutralLine(r.text), strength: 'weak'}));
+  const level = tok.level === 'unknown' || tok.level === 'ok' ? tok.level : kept.some((r) => r.strength === 'strong') ? 'danger' : kept.length ? 'caution' : 'ok';
+  const out = {...tok, level, reasons: [...kept, ...moved], standing};
+  if (tok.promoters?.kolPush) { const {kolPush, ...p} = tok.promoters; out.promoters = {...p, kolMentions: kolPush}; }
+  if (official && tok.launch) {
+    out.launch = {...tok.launch, lines: (tok.launch.lines || []).map((l) => ({...l, strength: 'weak'})),
+      ...(tok.launch.bundle ? {bundle: {...tok.launch.bundle, flagged: false, strength: null}} : {})};
+  }
+  return out;
+}
+
+/** Pure: a lite token scan -> the small token record verdicts use. pending = new token whose on-chain read is still queued.
+ *  The scan is read with guardScan first, so an official or established coin never carries a promotion-only danger. */
+export function tokenFacts(raw, opts = {}) {
+  if (!raw?.found) return null;
+  const tok = guardScan(raw, opts);
   const b = tok.launch?.bundle;
-  return {found: true, symbol: tok.symbol || null, level: tok.level, reasons: (tok.reasons || []).slice(0, 3),
+  return {found: true, symbol: tok.symbol || null, address: tok.address ? normAddr(tok.address) : null, level: tok.level, reasons: (tok.reasons || []).slice(0, 3),
     launch: tok.launch ? {lines: (tok.launch.lines || []).slice(0, 3)} : null,
     bundled: !!(b?.flagged && b.strength === 'strong'), bundle: b ? {wallets: b.wallets, supplyPct: b.supplyPct, kind: b.kind || null} : null,
+    ...(tok.standing ? {standing: tok.standing} : {}),
     pending: !tok.launch && (!!tok.pending || (tok.ageHours ?? 999) < 24)};
+}
+
+/** Pure: is a scam-KOL push (api kol/push.js kolPushFor: {kind, target}) about a protected subject? The author's own
+ *  account when it is official, a protected ticker, or a contract that is official or (per its scan) established. */
+export function pushOnProtected(t, kp, facts = {}) {
+  if (!kp) return false;
+  const target = String(kp.target || '');
+  if (kp.kind === 'handle') return officialHandle(t?.author?.handle) || officialHandle(target);
+  if (kp.kind === 'ticker') return protectedTicker(target);
+  if (kp.kind === 'ca') return !!officialToken(target) || [facts.postToken, facts.projectToken].some((x) => x?.standing && x.address && x.address === normAddr(target));
+  return false;
+}
+/** Pure: facts with the push on a protected subject taken out. The push stays a true fact about the posters (their own
+ *  posts and profiles still show it); it is just never a verdict on, or a row under, an official or established coin. */
+export function guardFacts(t, facts = {}) {
+  if (!facts.kolPush || !pushOnProtected(t, facts.kolPush, facts)) return facts;
+  const {kolPush, kolPushLines, ...rest} = facts;
+  return rest;
+}
+
+// --- the live API's verdicts, read again in the extension (background.js sharpen) until the API runs these rules ---
+const SOL_CA = /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g;
+/** Pure: the first contract a post names (X's "robinhood:0x..." smart cashtags included), EVM lower-cased. */
+export function postAddress(t) {
+  const text = `${t?.text || ''} ${t?.quoted?.text || ''}`;
+  const evm = text.match(/0x[a-fA-F0-9]{40}/);
+  if (evm) return evm[0].toLowerCase();
+  return (text.replace(/0x[a-fA-F0-9]+/g, ' ').match(SOL_CA) || []).find((a) => /\d/.test(a) && /[a-z]/.test(a) && /[A-Z]/.test(a)) || null;
+}
+/** Pure: the push subject a verdict names in its push line ("$ZEC pushed by 2 accounts ...", "0x39db...4571 pushed by ...",
+ *  "This account pushed by ...") -> {kind, target} like kolPushFor's, or null. */
+export function pushSubject(v, t) {
+  const lines = [v?.label === 'Scam KOL push' ? v.detail : null, ...(v?.card?.rows || []).filter((r) => r.kind === 'flags').flatMap((r) => r.lines || [])];
+  for (const line of lines) {
+    const s = String(line || '');
+    if (!/ pushed by \d+ accounts? from a known scam KOL group/.test(s)) continue;
+    if (/^This account /.test(s)) return {kind: 'handle', target: String(t?.author?.handle || '').toLowerCase()};
+    let m = s.match(/^\$([A-Za-z0-9]{1,15}) /);
+    if (m) return {kind: 'ticker', target: m[1].toUpperCase()};
+    m = s.match(/^(\w{6})\.\.\.(\w{4}) /);
+    if (m) {
+      const a = postAddress(t);
+      return {kind: 'ca', target: a && a.startsWith(normAddr(m[1])) && a.endsWith(normAddr(m[2])) ? a : `${m[1]}...${m[2]}`};
+    }
+  }
+  return null;
+}
+// labels the old rules put on a post because of the coin's scan: red "High-risk token", "Token launch" with a danger or
+// caution read, a project dossier turned red by its token. A bundled launch ("Scam", "$X bundled") is on-chain proof: never.
+const tokenRead = (v) => v?.label === 'High-risk token' || (v?.label === 'Token launch' && /\b(danger|caution flags)\b/.test(v.detail || '')) || (/^(New project|Project)$/.test(v?.label || '') && v.tone === 'rug');
+/** Pure: does this API verdict need the standing guard? Cheap, no network: true only for the labels and rows a promotion
+ *  signal can produce. */
+export const needsGuard = (v, t) => !!v && !v.hidden && (tokenRead(v) || !!pushSubject(v, t));
+/**
+ * Pure: an API verdict read with the standing guard. t: the post; v: the live API's verdict; scan: the lite scan of the
+ * post's contract (or of the author's own official token), or null when there is none or it failed.
+ * -> null: keep v as it is
+ *    {redo: false, card}: keep the label, drop the push row about a protected subject
+ *    {redo: true, card, postToken}: the label came from promotion signals on a protected coin: decide again (locally) with
+ *      the guarded postToken, keeping the API's other rows (calls, smart followers, reputation ...)
+ */
+export function guardApiVerdict(t, v, scan = null) {
+  if (!needsGuard(v, t)) return null;
+  const ca = postAddress(t);
+  // the scan is of the post's contract (the coin the API's postToken read); nothing else is used as the post's token
+  const postToken = ca && scan?.found && normAddr(scan.address || '') === ca ? tokenFacts(scan) : null;
+  const subj = pushSubject(v, t);
+  const pushSafe = !!subj && pushOnProtected(t, subj, {postToken});
+  // the guard took the scan's danger (or caution) away: it came from promotion signals on an established coin
+  const guarded = !!postToken?.standing && scan.level !== postToken.level;
+  // a post naming no contract: only the project dossier of an official token's own account (its bio contract) qualifies
+  const coinSafe = ca ? !!officialToken(ca) || guarded : /^(New project|Project)$/.test(v.label) && !!officialTokenOf(t?.author?.handle);
+  const redo = (v.label === 'Scam KOL push' && pushSafe) || (tokenRead(v) && coinSafe);
+  if (!redo && !pushSafe) return null;
+  const rows = (v.card?.rows || []).filter((r, k) => !(r.kind === 'flags' && ((redo && k === 0) || (pushSafe && /scam KOL group|^KOL push$/.test(r.title || '')))));
+  // the one-line detail under the pill was the push line itself (finalize takes it from the first flags row): it goes too
+  const dropDetail = pushSafe && / pushed by \d+ accounts? from a known scam KOL group/.test(v.detail || '');
+  return {redo, card: rows.length ? {...v.card, rows} : null, postToken, dropDetail};
 }
 
 // A project talking about itself: a link whose domain names the author (royalty.band from @royaltymsc, apes.app from @Apesdotapp).
@@ -395,6 +539,8 @@ export const fableRep = (score) => {
   const r = s < 800 ? s / 20 : s < 1600 ? 40 + ((s - 800) * 35) / 800 : 75 + ((s - 1600) * 25) / 800;
   return Math.max(0, Math.min(100, Math.round(r)));
 };
+// Fable Rep is shown as our own number only: no counts, backers or stakes leave the server
+export const REP_SOURCE = "Scored by Fable's private reputation database";
 
 // On-chain / DB evidence strong enough to decide a verdict without reading the text.
 export const hardEvidence = (facts = {}) => {
@@ -415,11 +561,10 @@ export function needsJev(t, facts = {}) {
 const followedLine = (k) => `Followed by ${k.n} accounts from a known scam KOL group: ${k.kols.slice(0, 3).map((h) => `@${h}`).join(', ')}${k.n > 3 ? ` and ${k.n - 3} more` : ''}`;
 
 const n0 = (x) => (x >= 1e6 ? `${(x / 1e6).toFixed(1)}M` : x >= 1e3 ? `${Math.round(x / 1e3)}K` : String(x));
-// "Builder: @x (their bio names it) · 12K followers · followed by 4 smart accounts · verified human"
+// "Builder: @x (their bio names it) · 12K followers · followed by 4 smart accounts"
 const builderLine = (m) => [`Builder: @${m.handle}${m.how ? ` (${m.how})` : ''}`,
   m.followers != null ? `${n0(m.followers)} followers` : null,
   m.onList ? "on Fable's smart list" : m.smart ? `followed by ${m.smart} smart account${m.smart === 1 ? '' : 's'}` : 'no smart followers',
-  m.human ? 'verified human' : null,
   m.kol ? 'reported shill account' : null,
   m.rugs ? `linked to ${m.rugs} rug${m.rugs === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ');
 /** Pure: dossier (+ optional lite token scan) -> the project verdict. Every line is a counted fact. */
@@ -456,6 +601,30 @@ export function projectVerdict(P, tok) {
   return {tone, label: fresh ? 'New project' : 'Project', stat: fresh ? (P.ageDays === 0 ? 'created today' : `${P.ageDays}d old`) : `${P.smart} smart`, confidence: 0.75,
     detail, card: {type: 'lines', tone: tone === 'legit' ? 'legit' : tone === 'rug' ? 'rug' : 'kol', title: 'Project dossier', lines}};
 }
+
+// Fable-confirmed entries: leads people submit at fable.market/submit that Fable reviewed and confirmed
+// (CONFIRMED-ENTRIES-SPEC.md). The server attaches them as facts.curated: [{id, kind, label, tag, detail, evidence (a
+// count), related, group, on: 'author' | 'post'}]. Stronger than text signals, weaker than on-chain proof: they come after
+// the chain checks, never stamp, and a post warning about a confirmed scam token is never flagged for it.
+const CURATED_TONE = {scam_account: 'rug', impersonator: 'rug', scam_token: 'rug', shiller: 'kol', kol_group: 'kol', hacked: 'kol'};
+const curatedLines = (c) => [c.detail, c.kind === 'impersonator' && c.related ? `Impersonates @${c.related}` : null, c.kind === 'kol_group' && c.group ? `Part of ${c.group}` : null,
+  `Reviewed and confirmed by Fable${c.evidence ? ` · ${c.evidence} piece${c.evidence === 1 ? '' : 's'} of evidence` : ''}`].filter(Boolean);
+export const curatedVerdict = (base, facts = {}, s = {}) => {
+  const list = facts.curated || [];
+  const tok = s.kind !== 'warning' && list.find((c) => c.kind === 'scam_token' && c.on === 'post');
+  const acct = ['hacked', 'scam_account', 'impersonator', 'shiller', 'kol_group'].map((k) => list.find((c) => c.kind === k && c.on === 'author')).find(Boolean);
+  const c = tok || acct;
+  if (!c) return null;
+  const tone = CURATED_TONE[c.kind];
+  return {...base, tone, label: c.label, stat: 'confirmed', confidence: 0.9, fade: tone === 'rug', curated: c.id, detail: c.detail || undefined,
+    card: {type: 'lines', tone, title: 'Confirmed by Fable', lines: curatedLines(c)}};
+};
+export const curatedTrusted = (base, facts = {}) => {
+  const c = (facts.curated || []).find((x) => x.kind === 'trusted' && x.on === 'author');
+  if (!c) return null;
+  return {...base, tone: 'legit', label: c.label || 'Trusted', stat: c.tag || 'confirmed', confidence: 0.88, curated: c.id, detail: c.detail || undefined,
+    card: {type: 'lines', tone: 'legit', title: 'Confirmed by Fable', lines: curatedLines(c)}};
+};
 
 function decide(t, s, facts, source) {
   const base = {id: t.id, source};
@@ -495,7 +664,6 @@ function decide(t, s, facts, source) {
       ...(syms.length ? [`${syms.map((s) => `$${s}`).join(', ')} launched ${p.length} time${p.length === 1 ? '' : 's'}, bundled at launch${taken > 1000 ? `, ${money(taken)} extracted` : ''}`] : []),
       ...(pa.tracked && !syms.length ? [`${typeof pa.tracked === 'string' ? `$${pa.tracked}` : 'Its token'} was launched with this operation's bundle wallets`] : []),
       ...(pa.kols?.length ? [`Shilled by the operation's KOL group: ${pa.kols.slice(0, 4).map((k) => `@${k}`).join(', ')}${pa.kols.length > 4 ? ` and ${pa.kols.length - 4} more` : ''}`] : []),
-      `Full evidence: fable.market/database/${pa.id}`,
     ];
     return {...base, tone: 'rug', label: 'Scam project', stat: syms.length ? `$${syms[0]}${taken > 1000 ? ` · ${money(taken)} extracted` : ''}` : 'tracked operation', confidence: 0.95, stamp: 'SCAM', fade: true,
       detail: lines[0], card: {type: 'lines', tone: 'rug', title: 'Rug operation', lines: [...lines, ...(facts.kolLines || [])]}};
@@ -503,7 +671,7 @@ function decide(t, s, facts, source) {
   // named as the promoter group in a published Fable investigation
   const pr = (facts.opRoles || []).find((r) => r.role === 'Promoter');
   if (pr) {
-    const lines = [`Named in a Fable investigation: promoter group of the ${pr.name}`, 'Operation: 31 bundled launches, $12.7M extracted', `Full evidence: fable.market/database/${pr.id}`];
+    const lines = [`Named in a Fable investigation: promoter group of the ${pr.name}`, 'Operation: 31 bundled launches, $12.7M extracted'];
     return {...base, tone: 'rug', label: 'Scam KOL network', stat: 'Promoter group', confidence: 0.9, stamp: 'SHILL', fade: true,
       detail: lines[0], card: {type: 'lines', tone: 'rug', title: 'KOL network', lines: [...lines, ...(facts.kolLines || [])]}};
   }
@@ -571,6 +739,10 @@ function decide(t, s, facts, source) {
       card: {type: 'lines', tone: 'rug', title: 'Launch red flags', lines: [...d.lines.map((x) => x.text).slice(0, 4), ...reportLine]}};
   }
 
+  // Fable-confirmed warnings (fable.market submissions Fable confirmed): after the chain checks, before anything read off text
+  const cv = curatedVerdict(base, facts, s);
+  if (cv) return cv;
+
   // Scams read straight off the post (scam.js): an impersonator's copied handle and name, a phishing domain, "send X get
   // 2X", a seed phrase ask, fake support. Each is a fact the card shows, never a model guess, so Jev cannot move it.
   // Established organisations are exempt like every text rule; a warning about a scam never fires the text checks.
@@ -593,9 +765,9 @@ function decide(t, s, facts, source) {
   }
 
   // a public reputation record that is clearly negative (reviews, not our opinion)
-  if (facts.ethos && facts.ethos.score < 800 && facts.ethos.negative >= 5 && facts.ethos.negative > facts.ethos.positive) {
-    return {...base, tone: 'kol', label: 'Poor reputation', stat: `Rep ${fableRep(facts.ethos.score)}`, confidence: 0.75,
-      card: {type: 'lines', tone: 'kol', title: 'Reputation', right: 'Reputation', lines: facts.ethosLines || []}};
+  if (facts.rating && facts.rating.score < 800 && facts.rating.negative >= 5 && facts.rating.negative > facts.rating.positive) {
+    return {...base, tone: 'kol', label: 'Poorly rated', byRep: true, stat: `Rep ${fableRep(facts.rating.score)}`, confidence: 0.75,
+      card: {type: 'lines', tone: 'kol', title: 'Fable Rep', right: 'Fable Rep', lines: facts.ratingLines || []}};
   }
 
   // 2. Text signals (never for verified organisations)
@@ -625,7 +797,7 @@ function decide(t, s, facts, source) {
   // context (amber), and the label only when this account IS the pushed project or this post is itself shilling it.
   const kp = facts.kolPush;
   // a reputable or smart-followed author is commenting, not shilling: never the push label (a row at most)
-  const credibleAuthor = (facts.ethos?.score >= 1600) || (facts.smart?.length || 0) >= 3;
+  const credibleAuthor = (facts.rating?.score >= 1600) || (facts.smart?.length || 0) >= 3;
   if (kp && kp.n >= 2 && !facts.trusted && !org && !credibleAuthor && (kp.kind === 'handle' || s.kind === 'shill')) {
     return {...base, tone: 'kol', label: 'Scam KOL push', stat: `${kp.n} KOLs · 7d`, confidence: 0.8,
       detail: (facts.kolPushLines || [])[0], card: {type: 'lines', tone: 'kol', title: 'KOL push', lines: [...(facts.kolPushLines || []), ...(facts.kolFollowed ? [followedLine(facts.kolFollowed)] : [])]}};
@@ -662,7 +834,9 @@ function decide(t, s, facts, source) {
     return {...base, ...pv};
   }
 
-  // 3. Positive evidence. Accounts on Fable's own smart list lead: they are the reference for everyone else.
+  // 3. Positive evidence. A Fable-confirmed trusted account first, then accounts on Fable's own smart list.
+  const ct = curatedTrusted(base, facts);
+  if (ct) return ct;
   if (facts.trusted) {
     const n = facts.smartCount || facts.smart?.length || 0;
     return {...base, tone: 'legit', label: 'Trusted', role: roleOf(facts.trusted.category), stat: String(n), confidence: 0.9,
@@ -670,14 +844,14 @@ function decide(t, s, facts, source) {
       detail: n ? undefined : "On Fable's list of smart accounts",
       card: n ? {type: 'smart', title: `Followed by ${n} smart account${n > 1 ? 's' : ''}`, people: (facts.smart || []).slice(0, 3), score: Math.min(0.99, 0.6 + n * 0.08), scoreLabel: 'Trusted'} : undefined};
   }
-  // Ethos reputation leads unless the smart-follower signal is strong (3+).
-  const ev = facts.ethos;
+  // Fable Rep leads unless the smart-follower signal is strong (3+).
+  const ev = facts.rating;
   const smartN = facts.smart?.length || 0;
   if (ev && ev.score >= 1600 && ev.positive >= 3 * Math.max(1, ev.negative) && smartN < 3) {
     const names = (facts.smart || []).slice(0, 2).map((p) => p.name || p.handle).join(' and ');
-    const faces = [...(facts.smart || []).map((p) => p.avatar), ...(ev.vouchers || []).filter((p) => p.score >= 1600).map((p) => p.avatar)].filter(Boolean).slice(0, 3);
-    return {...base, tone: 'legit', label: 'Reputable', stat: `Rep ${fableRep(ev.score)}`, confidence: 0.82, avatars: faces.length ? faces : undefined,
-      card: {type: 'lines', tone: 'legit', title: 'Reputation', right: 'Reputation', lines: [...(smartN ? [`Followed by ${names}`] : []), ...(facts.ethosLines || [])]}};
+    const faces = (facts.smart || []).map((p) => p.avatar).filter(Boolean).slice(0, 3);
+    return {...base, tone: 'legit', label: 'Well rated', byRep: true, stat: `Rep ${fableRep(ev.score)}`, confidence: 0.82, avatars: faces.length ? faces : undefined,
+      card: {type: 'lines', tone: 'legit', title: 'Fable Rep', right: 'Fable Rep', lines: [...(smartN ? [`Followed by ${names}`] : []), ...(facts.ratingLines || [])]}};
   }
   if (facts.smart && facts.smart.length) {
     const n = facts.smart.length;
@@ -685,12 +859,11 @@ function decide(t, s, facts, source) {
       avatars: facts.smart.slice(0, 3).map((p) => p.avatar),
       card: n >= 2 ? {type: 'smart', title: `Followed by ${n} smart account${n > 1 ? 's' : ''}`, people: facts.smart.slice(0, 3), score: Math.min(0.99, 0.55 + n * 0.08), scoreLabel: n >= 5 ? 'Top 3% of accounts' : 'Strong signal'} : undefined};
   }
-  // Ethos: public reputation, people vouch by staking ETH
-  const e = facts.ethos;
+  // Fable Rep on its own
+  const e = facts.rating;
   if (e && e.score >= 1600 && e.positive >= 3 * Math.max(1, e.negative)) {
-    const faces = (e.vouchers || []).filter((p) => p.avatar && p.score >= 1600).slice(0, 3).map((p) => p.avatar);
-    return {...base, tone: 'legit', label: 'Reputable', stat: `Rep ${fableRep(e.score)}`, confidence: 0.8, avatars: faces.length ? faces : undefined,
-      card: {type: 'lines', tone: 'legit', title: 'Reputation', right: 'Reputation', lines: facts.ethosLines || []}};
+    return {...base, tone: 'legit', label: 'Well rated', byRep: true, stat: `Rep ${fableRep(e.score)}`, confidence: 0.8,
+      card: {type: 'lines', tone: 'legit', title: 'Fable Rep', right: 'Fable Rep', lines: facts.ratingLines || []}};
   }
   // free smart signal from passive capture: smart accounts retweeting this account
   const boosters = facts.engaged?.boosters || [];
@@ -733,7 +906,7 @@ export function groupTickers(list) {
 export function backstoryRows(facts = {}, v = {}) {
   const rows = [];
   // red flags from the detectors come first when they drove the verdict
-  if (v.card?.type === 'lines' && (v.tone !== 'legit' || v.card.title === 'Project dossier')) rows.push({kind: 'flags', tone: v.tone, title: v.card.title || v.label, lines: v.card.lines || []});
+  if (v.card?.type === 'lines' && (v.tone !== 'legit' || v.card.title === 'Project dossier' || v.curated)) rows.push({kind: 'flags', tone: v.tone, title: v.card.title || v.label, lines: v.card.lines || []});
 
   const rugs = facts.projectRugs?.length
     ? {n: facts.projectRugs.length, how: facts.projectRugs.some((x) => x.kind === 'rugged') ? 'Liquidity pulled' : 'Collapsed 97%+ from peak', wallet: facts.projectRugs[0].deployer || facts.projectRugs[0].address,
@@ -762,10 +935,9 @@ export function backstoryRows(facts = {}, v = {}) {
   const eg = facts.engaged;
   if (eg && eg.total) rows.push({kind: 'engaged', boosters: eg.boosters.map((p) => ({...p, tag: CAT[p.category] || ''})), discussed: eg.discussed.map((p) => ({...p, tag: CAT[p.category] || ''}))});
 
-  const e = facts.ethos;
+  const e = facts.rating;
   if (e && (e.vouches || e.positive || e.negative)) {
-    const {url, attribution, ...rest} = e; // the source link and credit stay server-side
-    rows.push({kind: 'rep', ...rest, rep: fableRep(e.score), vouchers: (e.vouchers || []).map((p) => ({...p, rep: fableRep(p.score)}))});
+    rows.push({kind: 'rep', rep: fableRep(e.score)}); // our number only
   }
 
   if (facts.handles?.length > 1) {
@@ -773,6 +945,10 @@ export function backstoryRows(facts = {}, v = {}) {
     rows.push({kind: 'identity', renames: hist.length - 1, last: hist[1]?.handle || '', hist: hist.slice(1).map((h) => ({handle: h.handle, until: monthYear(h.last_seen)}))});
   }
   if (facts.accountAgeDays != null && facts.accountAgeDays < 120) rows.push({kind: 'fresh', days: facts.accountAgeDays});
+  for (const c of facts.curated || []) {
+    if (c.id === v.curated || c.on !== 'author' || !CURATED_TONE[c.kind]) continue;
+    rows.push({kind: 'flags', tone: CURATED_TONE[c.kind], title: c.label, lines: curatedLines(c)});
+  }
   return rows;
 }
 
@@ -780,25 +956,23 @@ export function backstoryRows(facts = {}, v = {}) {
 export const FABLE_SELF = new Set(['fabledotmarket']);
 const selfVerdict = (t) => ({id: t.id, source: 'fable', tone: 'self', label: 'Fable', badge: 'OFFICIAL', stat: 'official', confidence: 1, self: true});
 
-function finalize(t, s, facts, source) {
+function finalize(t, s, rawFacts, source) {
   if (FABLE_SELF.has(String(t.author?.handle || '').toLowerCase())) return selfVerdict(t);
+  // a scam-KOL push on an official account, a protected ticker or an established coin is a fact about the posters only
+  const facts = guardFacts(t, rawFacts || {});
   const v = decide(t, s, facts, source);
   if (v.hidden) return v;
-  if (facts.ethos && facts.ethos.score >= 1600 && v.tone !== 'rug' && v.tone !== 'kol') v.rep = fableRep(facts.ethos.score);
+  if (facts.rating && facts.rating.score >= 1600 && v.tone !== 'rug' && v.tone !== 'kol') v.rep = fableRep(facts.rating.score);
   const rows = backstoryRows(facts, v);
   if (rows.length) v.card = {type: 'profile', rows};
   // the one-line summary under the post
   const sm = rows.find((r) => r.kind === 'smart');
   const rep = rows.find((r) => r.kind === 'rep');
   if (!v.detail && v.tone === 'legit') {
-    if (sm && (v.label === 'Smart followers' || v.label === 'Legit' || v.label === 'Trusted' || !rep)) {
+    if (sm && (v.label === 'Smart followers' || v.label === 'Legit' || (v.label === 'Trusted' && !v.byRep) || !rep)) {
       const names = sm.all.slice(0, 2).map((p) => p.name || p.handle).join(', ');
       const rest = sm.n - Math.min(2, sm.all.length);
       v.detail = `Followed by ${names}${rest > 0 ? ` and ${rest} other smart account${rest > 1 ? 's' : ''}` : ''}`;
-    } else if (rep) {
-      const top = rep.vouchers.filter((p) => p.score >= 1600).slice(0, 2).map((p) => `@${p.handle}`);
-      v.detail = top.length ? `Backed by ${top.join(', ')}${rep.vouches > top.length ? ` and ${rep.vouches - top.length} others` : ''}`
-        : [rep.positive ? `${rep.positive.toLocaleString('en-US')} positive reviews` : '', rep.vouches ? `backed by ${rep.vouches}` : ''].filter(Boolean).join(' · ');
     }
   }
   if (!v.detail && v.card?.type === 'profile' && rows[0]?.kind === 'flags') v.detail = rows[0].lines[0] || '';

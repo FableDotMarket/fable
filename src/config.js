@@ -1,15 +1,18 @@
 // Fable remote config: the bundled default. The background worker reads https://intel.fable.market/v1/config every 15
 // minutes and keeps the merge in chrome.storage.local ('fableConfig'); every part of the extension reads the merge.
 // Data only (Manifest V3 forbids remote code): switches, timings, limits, card layout, words, rule lists, theme CSS.
-// Fable can change these values from its server without a store update. New logic still needs a new release.
+// Change it live with fable-intel/tools/extconfig.mjs (set / rollback / reset). New logic still needs a store update.
 (() => {
   const DEFAULT = {
     v: 1,
     rev: 'bundled',
     // kill switches: turn any part off for every user at once
-    on: {pills: true, cards: true, stamps: true, tokenMarks: true, sidebar: true, liveCharts: true, prefetch: true, quickVerdict: true,
+    // liveHub: live trades from Fable's hub (live.fable.market) for Robinhood and Solana coins (false: intel's own rooms, the 0.27.0 path);
+    // liveStream: one hub socket for the whole browser (false: one per coin)
+    on: {pills: true, cards: true, stamps: true, tokenMarks: true, sidebar: true, liveCharts: true, prefetch: true, quickVerdict: true, liveHub: true, liveStream: true,
       cardKinds: {contract: true, promo: true, builder: true, smart: true, activity: true}},
-    timing: {scanDebounceMs: 60, scanMaxWaitMs: 90, historyWaitMs: 300, candlesCacheMs: 8000, liveIdleMs: 60000},
+    // liveHubDelayMs: how long the hub's feed may stay delayed before its coins move to intel's rooms
+    timing: {scanDebounceMs: 60, scanMaxWaitMs: 90, historyWaitMs: 300, candlesCacheMs: 8000, liveIdleMs: 60000, liveHubDelayMs: 20000},
     limits: {contractsPerPost: 3, stats: 4, facts: 3},
     // card layout: section order and hidden sections (ids: headline chart stats facts shill also dev track foot)
     cards: {contract: {order: ['headline', 'chart', 'stats', 'facts', 'shill', 'also', 'dev', 'track', 'foot'], hide: []}},
