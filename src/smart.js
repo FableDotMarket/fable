@@ -1,0 +1,28 @@
+// Seed list of "smart" CT accounts. PLACEHOLDER picks: edit freely, this is the core of the smart-follower signal.
+// The graph is learned by visiting each account's Following page with the extension on (x.com/<handle>/following).
+export const SMART = [
+  {handle: 'hosseeb', tag: 'VC · Dragonfly'},
+  {handle: 'cobie', tag: 'Early caller'},
+  {handle: 'DefiIgnas', tag: 'Researcher'},
+  {handle: 'blknoiz06', tag: 'Trader'},
+  {handle: 'inversebrah', tag: 'Trader'},
+  {handle: 'toly', tag: 'Founder · Solana'},
+  {handle: 'jessepollak', tag: 'Builder · Base'},
+  {handle: 'brian_armstrong', tag: 'Founder · Coinbase'},
+  {handle: 'VitalikButerin', tag: 'Founder · Ethereum'},
+  {handle: 'zachxbt', tag: 'Investigator'},
+  {handle: 'MustStopMurad', tag: 'Trader'},
+  {handle: 'Pentosh1', tag: 'Trader'},
+  {handle: 'HsakaTrades', tag: 'Trader'},
+  {handle: 'DegenSpartan', tag: 'Trader'},
+  {handle: '0xngmi', tag: 'Builder · DefiLlama'},
+  {handle: 'sassal0x', tag: 'Researcher'},
+  {handle: 'RyanSAdams', tag: 'Media · Bankless'},
+  {handle: 'hasufl', tag: 'Researcher'},
+  {handle: 'notthreadguy', tag: 'Media'},
+  {handle: 'frankdegods', tag: 'Founder'},
+  {handle: 'lookonchain', tag: 'Onchain analytics'},
+  {handle: 'tier10k', tag: 'News'},
+  {handle: 'punk6529', tag: 'Collector'},
+  {handle: 'balajis', tag: 'Investor'},
+];

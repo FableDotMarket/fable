@@ -1,0 +1,199 @@
+{
+ "JR5_Crypto": {
+  "tone": "neutral",
+  "label": "Low signal",
+  "stat": "38%"
+ },
+ "brian_armstrong": {
+  "tone": "legit",
+  "label": "Legit dev",
+  "stat": "4 shipped",
+  "card": {
+   "type": "dev",
+   "title": "Builder history",
+   "shipped": [
+    "Coinbase",
+    "Base",
+    "x402",
+    "USDC rails"
+   ],
+   "years": "14 yrs shipping"
+  }
+ },
+ "PrimecoderX": {
+  "tone": "rug",
+  "label": "Scam",
+  "stat": "97%",
+  "stamp": "SCAM",
+  "fade": true
+ },
+ "yield": {
+  "tone": "legit",
+  "label": "Legit",
+  "stat": "3 smart followers",
+  "card": {
+   "type": "smart",
+   "title": "Followed by 3 smart accounts",
+   "people": [
+    {
+     "handle": "hosseeb",
+     "name": "Haseeb Qureshi ＞|＜",
+     "avatar": "https://pbs.twimg.com/profile_images/1988156658925924354/1LQJc-Ma_bigger.jpg",
+     "tag": "VC · Dragonfly"
+    },
+    {
+     "handle": "cobie",
+     "name": "Cobie",
+     "avatar": "https://pbs.twimg.com/profile_images/1955773696565719040/zVpm_8at_bigger.jpg",
+     "tag": "Early caller"
+    },
+    {
+     "handle": "DefiIgnas",
+     "name": "Ignas",
+     "avatar": "https://pbs.twimg.com/profile_images/2097277962903289856/4OemjpVH_bigger.jpg",
+     "tag": "Researcher"
+    }
+   ],
+   "score": 0.94,
+   "scoreLabel": "Top 3% of new projects"
+  }
+ },
+ "OLeksa_trader": {
+  "tone": "kol",
+  "label": "Paid shill",
+  "stat": "7/9 rugged",
+  "stamp": "SHILL",
+  "fade": true,
+  "card": {
+   "type": "kol",
+   "title": "Promotion history · last 30 days",
+   "tokens": [
+    [
+     "$FROG",
+     -96
+    ],
+    [
+     "$MILLI",
+     -91
+    ],
+    [
+     "$GIGA2",
+     42
+    ],
+    [
+     "$PUMPR",
+     -98
+    ],
+    [
+     "$CATX",
+     -94
+    ],
+    [
+     "$LAMBO",
+     -99
+    ],
+    [
+     "$DOGAI",
+     18
+    ],
+    [
+     "$SEND",
+     -93
+    ],
+    [
+     "$RICH",
+     -97
+    ]
+   ],
+   "footer": "Referral link detected in post"
+  }
+ },
+ "toly": {
+  "tone": "legit",
+  "label": "Legit dev",
+  "stat": "6 shipped"
+ },
+ "Raphael1402X": {
+  "tone": "rug",
+  "label": "Scam",
+  "stat": "95%",
+  "fade": true
+ },
+ "Noahhcalls": {
+  "tone": "rug",
+  "label": "Rug history",
+  "stat": "5/6",
+  "stamp": "RUG",
+  "fade": true,
+  "card": {
+   "type": "rug",
+   "title": "Deployer history",
+   "wallet": "0x7a3c…9f1e",
+   "stats": [
+    [
+     "6",
+     "tokens launched"
+    ],
+    [
+     "5",
+     "rugged within 72h"
+    ],
+    [
+     "-94%",
+     "avg drawdown"
+    ]
+   ],
+   "tokens": [
+    [
+     "$FLIP",
+     true
+    ],
+    [
+     "$11X",
+     true
+    ],
+    [
+     "$MILLI",
+     true
+    ],
+    [
+     "$NOAH",
+     true
+    ],
+    [
+     "$MOON",
+     true
+    ],
+    [
+     "$BASED",
+     false
+    ]
+   ]
+  }
+ },
+ "Henrik_on_HL": {
+  "tone": "legit",
+  "label": "Smart followers",
+  "stat": "8",
+  "avatars": [
+   "https://pbs.twimg.com/profile_images/1955773696565719040/zVpm_8at_bigger.jpg",
+   "https://pbs.twimg.com/profile_images/1988156658925924354/1LQJc-Ma_bigger.jpg",
+   "https://pbs.twimg.com/profile_images/2052070109758226438/xlyPdLmn_bigger.jpg"
+  ]
+ },
+ "wallstreetbets": {
+  "tone": "neutral",
+  "label": "News account",
+  "stat": "no calls"
+ },
+ "staycloakedxyz": {
+  "tone": "legit",
+  "label": "Legit dev",
+  "stat": "2 shipped"
+ },
+ "savipww": {
+  "tone": "kol",
+  "label": "Engagement farm",
+  "stat": "88%"
+ }
+}
