@@ -38,11 +38,24 @@ Every release lists the SHA-256 of its zip. To check yours:
 
 The zip is this repository's files, unchanged. You can also skip the zip entirely: clone this repo and load the folder with "Load unpacked".
 
+## Is it safe? Check it yourself in five minutes
+
+You do not have to trust us. Each check below points at the exact file and line.
+
+1. **What it is allowed to touch.** Open [`manifest.json`](manifest.json). The only permission is `storage` (your settings). It only runs on `x.com` and `twitter.com`. There is no access to other sites, tabs, history, cookies, downloads, your clipboard or your files, and Chrome enforces that list, not us.
+2. **Where it sends anything.** Search the code for `fetch(` and `WebSocket(`. Every network call is in [`src/background.js`](src/background.js) and goes to fable's own servers. The other `fetch` calls in `content.js` and `fake.js` only read files bundled inside the extension. The popup loads its font from Google Fonts.
+3. **No hidden code.** Search for `eval(`, `new Function` and `importScripts`: there are none. Chrome extensions on Manifest V3 cannot download and run code after install. The settings fable fetches from its server ([`src/config.js`](src/config.js)) are switches, timings and wording, never code.
+4. **How it reads X.** [`src/inject.js`](src/inject.js) wraps the page's `fetch` and `XMLHttpRequest` so it can copy X's answers for public timelines, posts and profiles (the list is the `WATCH` line). Every request and answer passes through unchanged, and it never makes a request of its own. DMs, bookmarks, notifications and account settings are not on the list.
+5. **The one cookie line.** `inject.js` and `capture.js` look at the page's cookie string and keep only `twid`: your public numeric X user id. Nothing else in it is kept or sent. fable uses that id to remove everything about you before anything leaves the page ([`src/capture.js`](src/capture.js), "drop the viewer entirely"). X's login session cookie (`auth_token`) is HttpOnly, so no page or extension script can read it at all.
+6. **The download matches this code.** Compare the zip's SHA-256 with the one on the release (see below). The zip is built straight from the tagged commit with `git archive`.
+
+What the code cannot show is what fable's servers do with what they receive. That is covered by the [privacy policy](https://fable.market/policy/).
+
 ## What it can access
 
 From [`manifest.json`](manifest.json):
 
-- **Sites:** only `x.com` and `twitter.com`, plus fable's own servers (`api.fable.market`, `intel.fable.market`).
+- **Sites:** only `x.com` and `twitter.com`, plus fable's own servers (`api.fable.market`, `intel.fable.market`, and `api.fable.trading`, our old domain, kept so older settings still work).
 - **Permissions:** `storage` (your settings). Nothing else. No access to other sites, your tabs, history, cookies or downloads.
 - **No keys or wallets.** It never asks for, reads or stores a seed phrase, private key or wallet connection.
 
