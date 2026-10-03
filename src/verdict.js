@@ -156,7 +156,7 @@ const CJK = /[぀-ヿ㐀-鿿가-힯]/g;
 const EN_STOP = /\b(?:the|and|is|are|to|of|you|it|in|for|that|this|with|on|we|i|your|be|not)\b/gi;
 const NUMERIC = /[\d$@#]/;
 const SLOP_GLOBAL = SLOP_PHRASES.slice(1).map(([w, name, rx]) => [w, name, new RegExp(rx.source, rx.flags + 'g')]);
-// the bare phrase patterns, for trace readers that count which ones match (overhaul/logging explainText)
+// the bare phrase patterns, for trace readers that count which ones match
 const SLOP = SLOP_PHRASES.map(([, , rx]) => rx);
 
 export const SLOP_BAR = 3;
@@ -313,6 +313,102 @@ export function textSignals(t) {
 
 export function heuristicVerdict(t, facts = {}) {
   return finalize(t, textSignals(t), facts, 'heuristic');
+}
+
+// ---------------------------------------------------------------------------
+// Post stance: is a post that names a coin a call (telling readers to buy or hold it), or something else? The
+// promotion record counted every ticker or contract as a call, so a rug investigation ("DRAFT's 98 wallets swept 179
+// ETH ... -> $DEED") graded its author a bad caller. Only 'call' counts toward promotion history.
+//   call       pushes readers toward the coin: buy / ape / book it, price targets, "huge potential", bullrun talk
+//   warning    exposes or warns about it: bundles, rugs, drains, linked wallets, an investigation
+//   research   a deep dive, thread or data breakdown with no push
+//   other      no coin call at all: donation or own wallet addresses, art requests, questions
+//   mention    names the coin and says nothing for or against it
+// ---------------------------------------------------------------------------
+export const STANCES = ['call', 'warning', 'research', 'other', 'mention'];
+const ST = {
+  push: /\b(buy(ing)?|bought|ap(e|ed|ing)( in(to)?)?|aping|load(ed|ing)? (up|more|the bags?)|accumulat\w*|add(ed|ing) (more|to my bag)|bag(s|ged)?|entry|book it|send (it|this)|lfg|looking (strong|good|great|bullish|ready)|breakout|about to (run|send|pump|moon|explode|rip)|don'?t (miss|fade|sleep)|not too late|still early|get in|nfa|price target|\d{2,4}x\b|to the moon|🚀)/i,
+  // "can't rug", "LP burned, no rug", "not a scam": a shill reassuring buyers, not a warning
+  notWarn: /\b(no|not|non|can'?t|cannot|won'?t|zero|anti)[- ](a )?(rug|scam|honeypot|bundle)\w*|\brug[- ]?proof\b/gi,
+  bull: /\b(bullish|bull ?runs?|bull market|(huge|big|massive|insane) (potential|upside|runs?|pump)|undervalued|gem|mooning|will (run|pump|send|moon|explode)|prime for|main players?|next (big|leg up)|eco cooking|cooking)\b/i,
+  warn: /\b(scam\w*|rug(s|ged|ging| ?pull(ed)?)?|honeypot|bundl(e|ed|es|ing)|drain(ed|er)?|exploit(ed)?|hack(ed)?|siphon\w*|swept|extracted|linked (wallets?|launch\w*|exactly)|insiders? (dumped|sold)|dev (dumped|sold)|exit liquidity|investigat\w*|exposed?|beware|stay away|red flags?|psa|don'?t (buy|ape|trust))\b/i,
+  research: /\b(deep ?dive|thread|analysis|breakdown|break down|research|report|data (shows?|says)|dashboard|onchain intel|stats? (on|for))\b/i,
+  other: /\b(donat(e|ion|ions)|tip jar|support my work|my (evm|sol|eth|wallet|donation) address(es)?|can someone|anyone (know|have))\b/i,
+};
+export function postStance(t) {
+  const text = deobfuscate(`${t?.text || ''}`).text;
+  if (!text.trim()) return 'mention';
+  const warned = ST.warn.test(text.replace(ST.notWarn, ' '));
+  if (ST.other.test(text) && !ST.push.test(text)) return 'other';
+  if (ST.push.test(text) && !warned) return 'call';
+  if (warned) return 'warning';
+  if (ST.bull.test(text)) return 'call';
+  if (ST.research.test(text)) return 'research';
+  if (/\?\s*$/.test(text.trim())) return 'other';
+  return 'mention';
+}
+// The API verdict's label already read the post with the model: use it where it says something about stance. A label
+// from the local rules (source 'heuristic') is the old ticker-plus-hype-word reading and never overrides postStance.
+export function stanceFromVerdict(v) {
+  if (!v || v.source === 'heuristic') return null;
+  const l = String(v.label || '');
+  if (/^call-out$/i.test(l)) return 'warning';
+  if (/^(shill signal|promo post|scam kol push)$/i.test(l)) return 'call';
+  if (/^commentary$/i.test(l)) return 'mention';
+  return null;
+}
+
+const tweetIdOf = (url) => String(url || '').match(/\/status\/(\d+)/)?.[1] || null;
+const GRADE_ORDER = ['bad', 'mixed', 'warn', 'pending', 'flat', 'good'];
+const MENTION_LABEL = {warning: 'Warned about', research: 'Researched', other: 'Posted', mention: 'Mentioned'};
+
+/** Pure: an intel /v1/history answer with only real calls in its promotion record. `stanceOf(tweetId)` returns a
+ *  stance this browser read for that post, or null. A per-promo `stance` from the server wins over it; a history the
+ *  server already filtered (`stances: true`) is returned untouched. A promo with no ticker and no price is a plain
+ *  wallet address (a donation address read as a "coin") and never a call. Posts nobody has read stay counted. */
+export function refineHistory(h, stanceOf = () => null) {
+  if (!h || h.error || h.stances === true || !Array.isArray(h.promos)) return h;
+  const stance = (p) => p.stance || (!p.symbol && p.sinceCall == null && p.mcap == null ? 'other' : null) || stanceOf(tweetIdOf(p.url)) || 'call';
+  const byTweet = new Map();
+  const promos = [], dropped = [];
+  for (const p of h.promos) {
+    const s = stance(p);
+    const id = tweetIdOf(p.url);
+    if (s === 'call') promos.push(p);
+    else { dropped.push({...p, stance: s}); if (id && !byTweet.has(id)) byTweet.set(id, s); }
+  }
+  if (!dropped.length) return h;
+  const coin = (p) => String(p.address || p.symbol || '').toLowerCase();
+  const kept = new Set(promos.map(coin));
+  const gone = new Set(dropped.map(coin).filter((k) => !kept.has(k)));
+  const record = {...(h.record || {})};
+  const counts = {...(h.counts || {})};
+  // the day grid: a dropped post's "Called $X" event becomes a mention that carries no grade
+  const days = (h.days || []).map((d) => {
+    const hit = (d.events || []).some((e) => e.type === 'promotion' && byTweet.has(tweetIdOf(e.url)));
+    if (!hit) return d;
+    const events = d.events.map((e) => {
+      const s = e.type === 'promotion' && byTweet.get(tweetIdOf(e.url));
+      if (!s) return e;
+      if (e.grade && record[e.grade] > 0) record[e.grade]--;
+      if (counts.promotion > 0) counts.promotion--;
+      const what = String(e.label || '').replace(/^Called\s+/i, '');
+      const {grade, since, ...rest} = e;
+      return {...rest, type: 'mention', stance: s, label: `${MENTION_LABEL[s] || 'Mentioned'} ${what}`.trim(), text: s === 'warning' ? 'not a call: the post warns about it' : 'not a call'};
+    });
+    const grades = events.map((e) => e.grade || (e.type === 'building' ? 'good' : null)).filter(Boolean);
+    const grade = GRADE_ORDER.find((g) => grades.includes(g)) || 'seen';
+    return {...d, events, grade};
+  });
+  // the caller rank was computed over every "call", the dropped ones included: it is not shown until the server
+  // computes it over real calls only
+  const rankTouched = dropped.some((p) => p.sinceCall != null);
+  return {
+    ...h, promos, days, record, counts,
+    promosTotal: Math.max(kept.size, (h.promosTotal || 0) - gone.size),
+    rank: rankTouched ? null : h.rank,
+    notCalls: dropped.map(({symbol, address, chain, url, stance: s}) => ({symbol, address, chain, url, stance: s})),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -602,8 +698,7 @@ export function projectVerdict(P, tok) {
     detail, card: {type: 'lines', tone: tone === 'legit' ? 'legit' : tone === 'rug' ? 'rug' : 'kol', title: 'Project dossier', lines}};
 }
 
-// Fable-confirmed entries: leads people submit at fable.market/submit that Fable reviewed and confirmed
-// (CONFIRMED-ENTRIES-SPEC.md). The server attaches them as facts.curated: [{id, kind, label, tag, detail, evidence (a
+// Fable-confirmed entries: leads people submit at fable.market/submit that Fable reviewed and confirmed. The server attaches them as facts.curated: [{id, kind, label, tag, detail, evidence (a
 // count), related, group, on: 'author' | 'post'}]. Stronger than text signals, weaker than on-chain proof: they come after
 // the chain checks, never stamp, and a post warning about a confirmed scam token is never flagged for it.
 const CURATED_TONE = {scam_account: 'rug', impersonator: 'rug', scam_token: 'rug', shiller: 'kol', kol_group: 'kol', hacked: 'kol'};

@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "Fable",
+    "description": "The extension name. The brand stays Fable in every language."
+  },
+  "extDesc": {
+    "message": "The backstory behind every post on X: rugs, bundles, real devs, smart followers and live charts, right under the post.",
+    "description": "Short description in the browser extension list and the Chrome Web Store (max 132 characters)."
+  }
+}

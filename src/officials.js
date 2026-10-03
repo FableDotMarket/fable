@@ -197,15 +197,14 @@ export const OFFICIAL_ALTS = ['CoinbaseSupport', 'CoinbaseDev', 'CoinbaseAssets'
 // launchpad, and $PONS is its token. It must NEVER be flagged as high risk / scam / shill"). Matched by exact contract
 // address only: a copy with the same ticker on another contract is judged on its own evidence. No automated token rule
 // (scam-KOL mentions, promotion rings, co-posting waves, scanner flags) turns these red or amber; what Fable read about
-// them stays visible as neutral facts. Sources for Pons: overhaul/registry-infra/PONS.md (ponsfamily.com, the official
-// GitHub README, DefiLlama).
+// them stays visible as neutral facts. Sources for Pons: ponsfamily.com, the official GitHub README, DefiLlama.
 // [chain, address, symbol, what it is, 'official handles']
 export const OFFICIAL_TOKENS = [
   ['robinhood', '0x39dbed3a2bd333467115de45665cc57f813c4571', 'PONS', 'Pons, the Robinhood Chain launchpad', 'ponsdotfamily MEADgod'],
+  ['robinhood', '0x14a64d6f3db9900be9c554d0961f539a16f43f9c', 'FABLE', 'Fable, the fable.market token', 'FableDotMarket'],
 ];
 
-// Tickers of established coins (CoinGecko top 100 and blue-chip protocols, overhaul/registry-major established.json,
-// 2026-09-28), plus the official tokens above. A "$ZEC" in a post with no contract means Zcash: scam-KOL mentions of the
+// Tickers of established coins (CoinGecko top 100 and blue-chip protocols, 2026-09-28), plus the official tokens above. A "$ZEC" in a post with no contract means Zcash: scam-KOL mentions of the
 // ticker are about the posters, never a flag on the coin. Tickers that are also plain words or shared by many memecoins
 // (M, U, W, RAIN, PUMP, BABY, CLOUD, STABLE ...) are left out on purpose.
 export const PROTECTED_TICKERS = ['BTC', 'ETH', 'USDT', 'BNB', 'XRP', 'USDC', 'SOL', 'TRX', 'ZEC', 'HYPE', 'DOGE', 'LINK', 'XMR', 'ADA', 'LEO', 'XLM',

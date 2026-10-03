@@ -30,6 +30,8 @@ b { font-weight: 700; }
 .pile { display: flex; flex-shrink: 0; }
 .face { width: 18px; height: 18px; border-radius: 50%; object-fit: cover; margin-left: -6px; box-shadow: 0 0 0 2px var(--bg); }
 .face:first-child { margin-left: 0; }
+.face.ltr { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; flex-shrink: 0; color: #fff; font: 700 10px/1 TwitterChirp, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+.pile.lg .face.ltr { font-size: 12px; }
 
 /* ---------- card (Community Notes-style box) ---------- */
 .expand { display: grid; grid-template-rows: 1fr; }
@@ -437,6 +439,9 @@ i.hx { display: inline-block; width: 10px; min-width: 10px; height: 10px; cursor
 .mv-tile.up { border-color: color-mix(in srgb, var(--green) 30%, transparent); background: color-mix(in srgb, var(--green) 8%, transparent); } .mv-tile.up .res { color: var(--green); }
 .mv-tile.pend .res { font-weight: 500; opacity: .8; }
 .mv-foot { display: flex; justify-content: space-between; gap: 12px; margin-top: 12px; font-size: 14px; color: var(--t2); }
+.mv-more { all: unset; cursor: pointer; flex: none; padding: 3px 12px; border-radius: 999px; font: 700 13px/18px TwitterChirp, -apple-system, "Segoe UI", sans-serif; color: var(--brand); border: 1px solid color-mix(in srgb, var(--brand) 40%, transparent); }
+.mv-more:hover { background: color-mix(in srgb, var(--brand) 14%, transparent); }
+.mv-card.compact .mv-body { padding-bottom: 2px; }
 .mv-foot b { color: var(--red); font-weight: 700; }
 
 /* contract: spark box + big stats + fact lines */
@@ -562,6 +567,9 @@ i.hx { display: inline-block; width: 10px; min-width: 10px; height: 10px; cursor
 .fc-ctl button:hover { color: var(--t1); } .fc-ctl button.on { color: var(--t1); background: color-mix(in srgb, var(--t1) 10%, transparent); }
 .fc-live { display: none; align-items: center; gap: 5px; margin-right: 6px; font: 700 10px ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .08em; color: var(--green); }
 .fc-live.on { display: inline-flex; }
+.fc-live.on.stale { display: none; }
+.fc-age { font: 500 11px ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--amber, var(--t2)); white-space: nowrap; }
+.fc-age:empty { display: none; }
 .fc-live i { position: relative; width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
 .fc-live i::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--green); animation: fablePing 1.6s var(--ease) infinite; }
 .fc-wrap { position: relative; height: 230px; border-radius: 10px; background: color-mix(in srgb, var(--t1) 2.5%, transparent); overflow: hidden; }
@@ -902,3 +910,115 @@ i.hx { display: inline-block; width: 10px; min-width: 10px; height: 10px; cursor
 .fc-rng button[hidden] { display: none; }
 .fc-bot .fc-flow { flex: 1; min-width: 0; margin-top: 0; justify-content: flex-end; font-size: 11px; }
 .fc-bot .fc-flow em { margin-left: 6px; }
+
+/* ===== 0.28 the investigation inside the card: the operation grid, how they took it / where it went / snipers / wash,
+   who pushed it, and every fact's proof link. Same tokens and components as the rest of the card ===== */
+.mv-proof { display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; border-radius: 5px; font: 600 11px/17px ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: 0;
+  color: var(--brand); background: color-mix(in srgb, var(--brand) 9%, transparent); text-decoration: none; white-space: nowrap; transition: background-color .15s var(--ease); }
+.mv-proof:hover { background: color-mix(in srgb, var(--brand) 18%, transparent); }
+.mv-proof .ex { width: 9px; height: 9px; fill: currentColor; flex: none; }
+.pf { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 6px; vertical-align: 1px; }
+.pf:empty { display: none; }
+.cx-r .mv-proof { color: var(--brand); } .cx-r .mv-proof:hover { text-decoration: none; }
+.mv-fact .tx, .mv-push .tx { flex: 1; min-width: 0; }
+
+/* how they took it / where it went / snipers / wash: a labelled line each */
+.mv-inv { padding-top: 6px; }
+.mv-inv-r { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 8px; align-items: start; padding: 4px 0; }
+.mv-inv-r + .mv-inv-r { border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
+.mv-inv-r .k { font-size: 12px; line-height: 18px; font-weight: 600; color: var(--t2); }
+.mv-inv-r .v { display: flex; gap: 7px; min-width: 0; font-size: 13.5px; line-height: 18px; font-weight: 500; color: var(--t1); }
+.mv-inv-r .v i { flex: none; width: 13px; font-style: normal; font-weight: 800; text-align: center; color: var(--t2); }
+.mv-inv-r.bad .v i { color: var(--red); } .mv-inv-r.warn .v i { color: var(--amber); } .mv-inv-r.good .v i { color: var(--green); }
+
+/* the operation: a grid of the same threat actors' launches, one square each, linking to the coin */
+.mv-op .mv-fact { margin-top: 2px; }
+.fable .mv-heat.v3 a { display: block; border-radius: 3.5px; background: var(--q0); transition: opacity .3s var(--ease), transform .36s cubic-bezier(.3,1.4,.6,1), filter .15s; transition-delay: calc(var(--c, 0) * 30ms + 200ms); }
+.fable:not(.in) .mv-heat.v3 a { opacity: 0; transform: scaleX(.3); }
+.fable .mv-heat.v3 a:hover { filter: brightness(1.25); }
+.fable .mv-heat.v3.slim a { border-radius: 2px; }
+.fable .mv-heat.v3.op { grid-template-rows: repeat(var(--rows, 1), 9px); gap: 4px 4px; margin-top: 9px; }
+.fable.done .mv-heat.v3 a { transition: none; }
+
+/* who pushed it */
+.mv-pushed .mv-sec-h { margin-bottom: 3px; }
+.mv-push { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 9px; align-items: center; padding: 4px 0; font-size: 13.5px; line-height: 18px; font-weight: 500; color: var(--t1); }
+.mv-push .pu { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; flex: none; }
+.mv-push .pu.ph { display: grid; place-items: center; font-size: 11px; font-weight: 800; color: var(--t2); background: var(--line); }
+.mv-push .mv-hl { font-weight: 700; }
+.fable:not(.in) .mv-inv-r, .fable:not(.in) .mv-push { opacity: 0; transform: translateY(4px); }
+.mv-inv-r, .mv-push { transition: opacity .3s var(--ease), transform .3s var(--ease); transition-delay: calc(var(--i, 0) * 55ms + 80ms); }
+.fable.done .mv-inv-r, .fable.done .mv-push { transition: none; }
+@media (prefers-reduced-motion: reduce) { .mv-inv-r, .mv-push, .fable .mv-heat.v3 a { transition: none !important; } }
+
+/* the profile panel's promotion record */
+.mv-card[data-mv="record"] { cursor: default; }
+.mv-card[data-mv="record"] .mv-stats { padding-top: 2px; }
+.mv-card[data-mv="record"] .mv-stats .mv-stat > span { white-space: normal; line-height: 14px; }
+.mv-card[data-mv="record"] .mv-tiles { margin-top: 12px; }
+.mv-nets { margin-top: 10px; min-height: 0; }
+.profile-panel .mv-card[data-mv="record"] { margin-top: 10px; }
+
+/* B9 (light theme): the soft green chip rule of the light theme won over the amber, red and grey chips (a promotion network read as positive), and the
+   header's mono tag took the wide letter-spacing meant for the plain uppercase tag */
+.fable.light .mv-chip.a { color: var(--amber); background: color-mix(in srgb, var(--amber) 11%, #fff); border-color: color-mix(in srgb, var(--amber) 30%, #fff); }
+.fable.light .mv-chip.r { color: var(--red); background: color-mix(in srgb, var(--red) 8%, #fff); border-color: color-mix(in srgb, var(--red) 26%, #fff); }
+.fable.light .mv-chip.n { color: var(--t1); background: color-mix(in srgb, var(--t2) 9%, #fff); border-color: color-mix(in srgb, var(--t2) 24%, #fff); }
+.fable.light .mv-head .r.mono { letter-spacing: .02em; }
+
+/* small print when the investigation's coverage is partial */
+.mv-inv-note { margin-top: 8px; font-size: 11.5px; line-height: 15px; color: var(--t2); }
+
+/* the operation grid's legend sits on one line with its caption */
+.mv-key.dev.op .cap { flex-basis: auto; margin-right: 6px; }
+.mv-key.dev.op { margin-top: 5px; }
+
+/* the investigation's sections sit closer than the card's older ones: they are one story */
+.mv-sec.mv-inv, .mv-sec.mv-op, .mv-sec.mv-pushed { margin-top: 10px; padding-top: 8px; }
+.fable .mv-heat.v3.op { margin-top: 8px; }
+
+/* ---------- 0.29 languages: the card is written in the language it carries (lang on every .fable root) ----------
+   System CJK / Thai fonts after the Latin stack (so numbers and tickers keep TwitterChirp), no tracking on CJK/Thai text (it is
+   meant for Latin capitals), taller lines (CJK glyphs fill the em box, Thai marks stand above and below it). The stamp keeps its tracking. */
+.fable[lang="zh-CN"] { --cjk: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", "WenQuanYi Micro Hei"; }
+.fable[lang="zh-TW"] { --cjk: "PingFang TC", "Microsoft JhengHei UI", "Microsoft JhengHei", "Noto Sans CJK TC", "Noto Sans TC", "Source Han Sans TC"; }
+.fable[lang="ja"] { --cjk: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "Meiryo", "Noto Sans CJK JP", "Noto Sans JP", "Source Han Sans JP"; }
+.fable[lang="ko"] { --cjk: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", "Noto Sans KR", "Source Han Sans KR"; }
+.fable[lang="th"] { --cjk: "Leelawadee UI", "Thonburi", "Noto Sans Thai", "Tahoma"; }
+.fable[lang="vi"] { --cjk: "Segoe UI", "Helvetica Neue", Arial; }
+.fable[lang="id"] { --cjk: "Segoe UI"; }
+.fable:is([lang="zh-CN"], [lang="zh-TW"], [lang="ja"], [lang="ko"], [lang="th"], [lang="vi"]) { font-family: TwitterChirp, -apple-system, BlinkMacSystemFont, var(--cjk), "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+.fable:is([lang="zh-CN"], [lang="zh-TW"], [lang="ja"], [lang="ko"], [lang="th"], [lang="vi"]) *:not(.mono):not(code):not(svg):not(svg *):not(.stamp *) { font-family: TwitterChirp, -apple-system, BlinkMacSystemFont, var(--cjk), "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+.fable:is([lang="zh-CN"], [lang="zh-TW"], [lang="ja"], [lang="ko"], [lang="th"]) *:not(.stamp *) { letter-spacing: 0; text-transform: none; }
+.fable:is([lang="zh-CN"], [lang="zh-TW"], [lang="ja"], [lang="ko"]) :is(.txt span, .sig span, .detail, .mv-read, .mv-fact, .mv-facts div, .lead, .th-note, .hd, .he span) { line-height: 1.45; }
+.fable[lang="th"] :is(.ctx, .txt, .sig, .detail, .mv-read, .mv-fact, .mv-facts div, .lead, .th-note, .hd, .he, .head, .mv-head, .mv-sec h4, .mv-key, .foot, .tok, .stat span) { line-height: 1.6; }
+.fable:is([lang="vi"]) :is(.txt span, .sig span, .detail, .mv-read, .mv-fact, .mv-facts div, .lead, .th-note) { line-height: 1.4; }
+
+.stamp span { white-space: nowrap; } /* a longer word in another language steps its size down (content.js stampPost) instead of wrapping */
+
+/* a long line (CJK / Thai count characters, not width) must ellipsize inside the post column, never widen the grid cell that holds it */
+.fold { grid-template-columns: minmax(0, 1fr); }
+.fold > div { min-width: 0; }
+.expand { grid-template-columns: minmax(0, 1fr); }
+.expand > div { min-width: 0; }
+
+/* line breaking by language (0.29): Korean breaks between words, never inside one ("갔" / "나"); CJK and Thai lines avoid a lone short fragment on the last line */
+.fable[lang="ko"] :is(.txt, .sig, .mv-fact, .mv-inv-r, .mv-inv-r .k, .mv-inv-r .v, .mv-sec-h, .lead, .detail, .tx, .mv-read, .mv-sec-n, .th-note, .line, .who, .hd) { word-break: keep-all; overflow-wrap: anywhere; }
+.fable:is([lang="zh-CN"], [lang="zh-TW"], [lang="ja"], [lang="ko"], [lang="th"]) :is(.txt, .sig, .mv-fact, .mv-inv-r .v, .tx, .lead, .mv-read, .th-note, .he, .hd) { text-wrap: pretty; }
+.fable[lang="ja"] :is(.txt, .sig, .mv-fact, .mv-inv-r .v, .tx, .lead, .mv-read) { line-break: strict; }
+.fable:is([lang="zh-CN"], [lang="zh-TW"], [lang="ja"], [lang="ko"], [lang="th"]) { text-wrap: pretty; } /* inherited: every line of the card */
+.fable[lang="ja"] { line-break: strict; }
+/* pretty does not catch a lone CJK character on the last line; balance spreads a short wrapped line evenly (Chromium limits it to 6 lines, which every fact is) */
+.fable:is([lang="zh-CN"], [lang="zh-TW"], [lang="ja"], [lang="ko"], [lang="th"]) :is(.mv-push, .mv-fact, .mv-inv-r .tx, .txt span, .lead, .mv-read, .th-note) { text-wrap: balance; }
+.fable:is([lang="zh-CN"], [lang="zh-TW"], [lang="ja"], [lang="ko"], [lang="th"]) .tx { text-wrap: balance; }
+
+/* Win Lite I1 (0.29.0): a result word in another language ("Graduate แล้ว", "已毕业") is never cut: when avatar, ticker and word do not fit on one line the word drops to a second line
+   under the ticker (the ticker may take an ellipsis, the status never does) */
+.fable:not([lang="en"]) .mv-tile { flex-wrap: wrap; row-gap: 3px; }
+.fable:not([lang="en"]) .mv-tile b { flex: 1 1 auto; min-width: 3.4em; }
+.fable:not([lang="en"]) .mv-tile .res { flex: 0 0 auto; max-width: 100%; margin-left: auto; white-space: nowrap; }
+/* Win Lite I7: the sub-line of a Backstory row is one line in English; a longer language wraps to two before it takes an ellipsis */
+.fable:not([lang="en"]) .sig .txt span { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+
+/* Win Lite I8: Japanese lines broke inside words ("ロー / ンチ") and left a lone "た。": break at phrase boundaries (Chrome 119+, ignored by older browsers), keep the strict rules for small kana and punctuation */
+.fable[lang="ja"] { word-break: auto-phrase; line-break: strict; }

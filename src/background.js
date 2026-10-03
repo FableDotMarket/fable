@@ -1,9 +1,12 @@
 // Fable background service worker (ES module).
 // Decides verdicts: live API (Jev + DB) -> local heuristics.
 // Also builds the smart-follower graph from X data the user already loads.
-import {heuristicVerdict, textSignals, guardScan, guardApiVerdict, needsGuard, postAddress} from './verdict.js';
+import {heuristicVerdict, textSignals, guardScan, guardApiVerdict, needsGuard, postAddress, postStance, stanceFromVerdict, refineHistory} from './verdict.js';
+import {officialPostGuard, scopeVerdict} from './postguard.js';
 import {SMART} from './smart.js';
+import {softenVerdict} from './soften.js';
 import './config.js';
+import './callout.js'; // 0.29.1: call-outs never carry a promotion label (src/callout.js, globalThis.FableCallout)
 
 /* ---------------- Remote config (data only; src/config.js holds the bundled default) ----------------
    Read from intel every 15 minutes and kept in storage.local, where every tab reads it. A failed read keeps the last
@@ -258,8 +261,11 @@ async function sharpen(tweets, api, readsP = null) {
   for (const t of tweets) {
     let v = byId.get(String(t.id));
     try { v = await guardVerdict(t, v); } catch { /* keep the API verdict */ }
+    // a post whose every contract is official ($PONS): no verdict about a coin or a launch reaches the pill, from the API or from the local rules
+    if (officialPostGuard(t, v)) v = undefined;
     let local = null;
     try { local = heuristicVerdict(t, await factsFor(t)); } catch { local = null; }
+    if (officialPostGuard(t, local)) local = null;
     const rd = reads[String(t.id)];
     let pick = v || local;
     // a newer local rule found a flag the API reply lacks: the local verdict wins (a scam over anything but a rug,
@@ -283,9 +289,38 @@ async function sharpen(tweets, api, readsP = null) {
         pick = {...pick, tone: 'rug', label: lbl, stat: `"${rd.quote.slice(0, 48)}"`, confidence: 0.9, source: `${pick.source || 'api'}+reader`};
       }
     }
-    if (pick) out.push(pick);
+    if (pick) out.push(finish(t, scopeVerdict(t, softenVerdict(pick)), rd));
   }
   return out;
+}
+
+// 0.29.1, the last step of every verdict (the live API's, the kept one and the local one alike):
+//  1. a post that warns about a coin or calls something out never carries a promotion label, a SHILL stamp or a bundled-coin "Scam" stamp (FableCallout.guard:
+//     the post's own words in eight languages, the post reader's stance, the server's stance in history). It only removes; it never adds a flag.
+//  2. a verdict about the AUTHOR (their record, network or followers), or one that carries a promotion label, carries the post's own reading beside it (postOnly: what
+//     the same engine says with no author facts), so the page can draw the author once, give every later post of that author what the post itself says, and show
+//     what the post says when the judged stance (intel /v1/stance) takes the promotion label off.
+function finish(t, v, read = null) {
+  if (!v || typeof v !== 'object') return v;
+  let out = v;
+  // with the judged stance on (on.stanceGate, the default) the guard only marks a call-out (callout: true): the page asks intel /v1/stance and a judged "promotes" outranks these words
+  try { out = globalThis.FableCallout.guard(t, v, {read, stance: LOCAL_CALLOUT.has(String(t?.id)) ? 'warning' : null}, {markOnly: CFG_BG?.on?.stanceGate !== false}); } catch { out = v; }
+  try {
+    if ((globalThis.FableCallout.authorLevel(out) || globalThis.FableCallout.gated(out)) && !out.postOnly) {
+      const p = heuristicVerdict(t, {});
+      const slim = !p || p.hidden ? {hidden: true} : (({id, tone, label, stat, detail, confidence, stamp, fade, card, callout}) => ({id, tone, label, stat, detail, confidence, stamp, fade, card, callout, source: 'local+post'}))(globalThis.FableCallout.guard(t, p, {read}, {markOnly: CFG_BG?.on?.stanceGate !== false}));
+      out = {...out, postOnly: slim};
+    }
+  } catch { /* the author verdict stands as it was */ }
+  return out;
+}
+// posts this browser saw whose own words call something out (set when X's data arrives, before the page asks for anyone's history)
+const LOCAL_CALLOUT = new Set();
+function noteCallouts(tweets) {
+  for (const t of tweets || []) {
+    if (!t?.id || !(t.cashtags?.length || NAMES_COIN.test(t.text || ''))) continue;
+    try { if (globalThis.FableCallout.isCallout(t.text).hit) { LOCAL_CALLOUT.add(String(t.id)); if (LOCAL_CALLOUT.size > 6000) LOCAL_CALLOUT.delete(LOCAL_CALLOUT.values().next().value); } } catch { /* skip */ }
+  }
 }
 
 // API verdicts kept for 6 h across browser restarts (the API itself caches as long), so reopening X shows the right
@@ -311,7 +346,38 @@ async function vkeepPut(list) {
   vkeepSave();
 }
 
+// Post stances: whether each post this browser read that names a coin is a call or something else (a warning, research,
+// a mention). The account history card counts only calls (verdict.js refineHistory). Kept 30 days, the history window.
+const STANCE_MS = 30 * 864e5, STANCE_MAX = 4000;
+const NAMES_COIN = /\$[A-Za-z][A-Za-z0-9]{1,11}\b|\b0x[a-fA-F0-9]{40}\b|\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/;
+let stances = null, stanceTimer = null;
+async function stanceLoad() {
+  if (!stances) { try { stances = (await chrome.storage.local.get('stance1')).stance1 || {}; } catch { stances = {}; } }
+  return stances;
+}
+async function stancePut(tweets, vs) {
+  const k = await stanceLoad(), now = Date.now();
+  const byId = new Map((vs || []).map((v) => [String(v?.id), v]));
+  let n = 0;
+  for (const t of tweets || []) {
+    if (!t?.id || !(t.cashtags?.length || NAMES_COIN.test(t.text || ''))) continue;
+    k[String(t.id)] = [(globalThis.FableCallout.isCallout(t.text).hit ? 'warning' : null) || stanceFromVerdict(byId.get(String(t.id))) || postStance(t), now];
+    n++;
+  }
+  if (!n) return;
+  clearTimeout(stanceTimer);
+  stanceTimer = setTimeout(() => {
+    stances = Object.fromEntries(Object.entries(stances || {}).filter(([, x]) => now - x[1] < STANCE_MS).sort((a, b) => b[1][1] - a[1][1]).slice(0, STANCE_MAX));
+    chrome.storage.local.set({stance1: stances}).catch(() => {});
+  }, 1500);
+}
+
 async function verdicts(tweets) {
+  const out = await verdictsFor(tweets);
+  stancePut(tweets, out).catch(() => {});
+  return out;
+}
+async function verdictsFor(tweets) {
   const s = await settings();
   const out = [];
   const rest = tweets;
@@ -337,8 +403,20 @@ async function verdicts(tweets) {
     }
   }
 
-  for (const t of rest) out.push(heuristicVerdict(t, await factsFor(t)));
+  for (const t of rest) out.push(finish(t, heuristicVerdict(t, await factsFor(t))));
   return out;
+}
+
+// 0.29.1: a post in an account's record that this browser read as a call-out (the post's own words: FableCallout.isCallout) is not a call, whatever the server judged
+// (the server's text rule reads English only; its model answer needs a confidence the call-out may not reach). Same move as refineHistory, only ever REMOVING a call.
+function withLocalCallouts(h, k = {}) {
+  if (!h || h.error || !Array.isArray(h.promos) || !h.promos.length) return h;
+  const idOf = (u) => String(u || '').match(/\/status\/(\d+)/)?.[1];
+  const hit = (p) => { const id = idOf(p.url); return !!id && p.stance !== 'warning' && (LOCAL_CALLOUT.has(id) || k[id]?.[0] === 'warning'); };
+  if (!h.promos.some(hit)) return h;
+  const promos = h.promos.map((p) => (hit(p) ? {...p, stance: 'warning'} : p));
+  const r = refineHistory({...h, promos, stances: undefined}, () => null);
+  return {...r, stances: h.stances, notCalls: [...(h.notCalls || []), ...(r.notCalls || []).filter((n) => !(h.notCalls || []).some((x) => x.url === n.url))]};
 }
 
 const API_CACHE = new Map(); // path -> {at, data}
@@ -372,14 +450,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
       const out = [], k = await vkeepLoad(), now = Date.now();
       for (const t of msg.tweets || []) {
         const kept = k[String(t.id)];
-        if (kept && now - kept.at < VKEEP_MS) { out.push({...kept.v, kept: true}); continue; }
-        try { out.push(heuristicVerdict(t, await factsFor(t))); } catch { /* skip */ }
+        if (kept && now - kept.at < VKEEP_MS) { out.push(finish(t, scopeVerdict(t, softenVerdict({...kept.v, kept: true})))); continue; }
+        try { const hv = heuristicVerdict(t, await factsFor(t)); if (!officialPostGuard(t, hv)) out.push(finish(t, scopeVerdict(t, softenVerdict(hv)))); } catch { /* skip */ }
       }
       reply({verdicts: out});
     }).catch(() => reply({verdicts: []}));
     return true;
   }
   if (msg.type === 'ingest') {
+    noteCallouts(msg.payload?.tweets);
     ingest(msg.payload);
     return false;
   }
@@ -391,7 +470,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (msg.type === 'profile' || msg.type === 'scan') {
     apiGet(msg.type === 'profile' ? `/v1/profile?${new URLSearchParams({handle: msg.handle || '', ...(msg.id ? {id: msg.id} : {})})}` : `/v1/token/scan?${new URLSearchParams(msg.query || {})}`)
       // token scans are read with the standing guard: an official or established coin is never red or amber from who posted it
-      .then((r) => reply(msg.type === 'scan' && r ? guardScan(r, {bySymbol: !msg.query?.address}) : r))
+      .then((r) => reply(msg.type === 'scan' && r ? guardScan(r, {bySymbol: !msg.query?.address}) : msg.type === 'profile' && r?.verdict ? {...r, verdict: softenVerdict(r.verdict)} : r))
       .catch(() => reply(null));
     return true;
   }
@@ -464,13 +543,54 @@ async function intelGet(path, ttl = 20e3, timeoutMs = 15000) {
   INFLIGHT.set(key, p);
   return stale || p;
 }
+/* ---------------- 0.29.2: the judged stance of a post (intel /v1/stance) ----------------
+   POST /v1/stance {items: [{id, text, symbol?, address?}]} (20 at most): the investigation's own judgment of the post when it has one, else Jev's (only for a post whose text
+   names a coin) -> [{id, stance: promotes | warns | neutral | unrelated | none | pending, source, paid?}] in the order asked. "none" = no information (no coin named, nothing could be
+   judged, the judged-post budget is spent); "pending" = a judgment is running (the page asks again). 'down' here means intel did not answer at all (the page then keeps the 0.29.1 rules).
+   Judged answers are kept 6 h per post id here, "none" 20 minutes; one POST per 20 posts. */
+const STANCE_J = new Map(); // tweet id -> {stance, at}
+async function judgedStances(items) {
+  const out = {}, ask = [], now = Date.now();
+  for (const it of items.slice(0, 60)) {
+    const id = String(it?.id || '');
+    if (!/^\d{5,25}$/.test(id)) continue;
+    const c = STANCE_J.get(id);
+    if (c && now - c.at < (c.stance === 'none' ? 20 * 60e3 : 6 * 3600e3)) out[id] = c.stance;
+    else ask.push({id, text: String(it.text || '').slice(0, 1000), ...(it.symbol ? {symbol: String(it.symbol).slice(0, 20)} : {}), ...(/^(0x[0-9a-fA-F]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/.test(String(it.address || '')) ? {address: String(it.address)} : {})});
+  }
+  for (let k = 0; k < ask.length; k += 20) {
+    const chunk = ask.slice(k, k + 20);
+    let rows = null;
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 9000);
+    try {
+      const r = await fetch(`${INTEL_URL}/v1/stance`, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({items: chunk}), signal: ctl.signal});
+      if (r.ok) { const j = await r.json(); rows = Array.isArray(j) ? j : Array.isArray(j?.items) ? j.items : null; }
+    } catch { rows = null; } finally { clearTimeout(timer); }
+    if (!rows) { for (const it of chunk) out[it.id] = 'down'; continue; }
+    const byId = new Map(rows.filter((x) => x && x.id != null).map((x) => [String(x.id), x]));
+    chunk.forEach((it, n) => {
+      const st = globalThis.FableCallout.stanceOf(byId.get(it.id) ?? rows[n] ?? null);
+      if (st !== 'pending') { STANCE_J.set(it.id, {stance: st, at: now}); if (STANCE_J.size > 4000) STANCE_J.delete(STANCE_J.keys().next().value); }
+      out[it.id] = st;
+    });
+  }
+  return out;
+}
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  if (msg.type === 'stance') {
+    if (msg.reset) STANCE_J.clear(); // the tests start from an empty cache
+    judgedStances(Array.isArray(msg.items) ? msg.items : []).then(reply).catch(() => reply({}));
+    return true;
+  }
   if (msg.type === 'contract') {
     intelGet(`/v1/contract?${new URLSearchParams({...(msg.address ? {address: String(msg.address)} : {symbol: String(msg.symbol || '')}), ...(msg.chain ? {chain: String(msg.chain)} : {}), ...(msg.tweet ? {tweet: String(msg.tweet)} : {})})}`, msg.fresh ? 0 : 20e3).then(reply);
     return true;
   }
   if (msg.type === 'history') {
-    intelGet(`/v1/history?${new URLSearchParams({handle: String(msg.handle || ''), ...(msg.weeks ? {weeks: String(msg.weeks)} : {})})}`, 5 * 60e3).then(reply);
+    // only real calls count: posts that warn about, research or just mention a coin leave the promotion record
+    Promise.all([intelGet(`/v1/history?${new URLSearchParams({handle: String(msg.handle || ''), ...(msg.weeks ? {weeks: String(msg.weeks)} : {})})}`, 5 * 60e3), stanceLoad()])
+      .then(([h, k]) => reply(withLocalCallouts(refineHistory(h, (id) => k[id]?.[0] || null), k)))
+      .catch(() => reply(null));
     return true;
   }
   if (msg.type === 'alerts') {
@@ -525,10 +645,19 @@ const DELAYED = (note) => ({type: 'status', live: true, delayed: true, note});
 const LIVE = new Map(); // key -> {key, a, msg, ports, status, mode: 'stream' | 'coin' | 'intel', parked, ws}
 const hub = {ws: null, open: false, fails: 0, downUntil: 0, retry: 0, ping: 0, idle: 0, status: null, lateTimer: 0, late: false};
 
+// 0.28: a card that only watches its coin's verdict ({address, chain, only: 'verdict'}) is sent verdict messages and nothing else:
+// no trades, no ticks, no status
+const VERDICT_ONLY = new WeakSet();
 function deliver(e, d) {
   if (!d || typeof d !== 'object') return;
   if (d.type === 'status') e.status = d;
-  for (const p of e.ports) { try { p.postMessage(d); } catch { /* card gone */ } }
+  // a batch frame (several messages in one) is cut down to its verdicts for a watcher
+  const verdicts = d.type === 'batch' && Array.isArray(d.m) ? d.m.filter((x) => x?.type === 'verdict') : null;
+  for (const p of e.ports) {
+    let out = d;
+    if (VERDICT_ONLY.has(p) && d.type !== 'verdict') { if (!verdicts?.length) continue; out = verdicts.length === 1 ? verdicts[0] : {type: 'batch', m: verdicts}; }
+    try { p.postMessage(out); } catch { /* card gone */ }
+  }
 }
 const streamed = () => [...LIVE.values()].filter((e) => e.mode === 'stream');
 
@@ -599,7 +728,11 @@ function hubEnsure() {
     if (hub.ws !== ws) return;
     let d; try { d = JSON.parse(ev.data); } catch { return; } // "pong"
     if (d?.type === 'status') return hubStatus(d);
-    const a = d?.a && (EVM_RE.test(d.a) ? d.a.toLowerCase() : d.a);
+    // {type:'verdict', token, chain, verdict, color, facts_hash}: a coin's verdict or facts changed on the server (on.verdictPush). It names
+    // its coin as `token`; everything else names it `a`
+    const named = d?.type === 'verdict' ? (d.token || d.a) : d?.a;
+    if (d?.type === 'verdict' && !liveOn('verdictPush')) return;
+    const a = named && (EVM_RE.test(named) ? String(named).toLowerCase() : named);
     if (a) for (const e of LIVE.values()) if (e.a === a && e.mode === 'stream' && !e.parked) deliver(e, d);
   };
   ws.onclose = () => {
@@ -652,6 +785,7 @@ chrome.runtime.onConnect.addListener((port) => {
   let key = null;
   port.onMessage.addListener((m) => {
     if (key || !m?.address) return;
+    if (m.only === 'verdict') VERDICT_ONLY.add(port);
     key = `${m.chain || ''}:${m.address}`;
     let e = LIVE.get(key);
     if (!e) {
@@ -662,8 +796,8 @@ chrome.runtime.onConnect.addListener((port) => {
       return;
     }
     e.ports.add(port);
-    // a second card on the same coin gets the stream's current state at once (LIVE or DELAYED)
-    if (e.status) { try { port.postMessage(e.status); } catch { /* card gone */ } }
+    // a second card on the same coin gets the stream's current state at once (LIVE or DELAYED); a verdict watcher has no use for it
+    if (e.status && !VERDICT_ONLY.has(port)) { try { port.postMessage(e.status); } catch { /* card gone */ } }
   });
   port.onDisconnect.addListener(() => {
     const e = key && LIVE.get(key);

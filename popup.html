@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html>
 <meta charset="utf-8">
 <title>Fable</title>
 <style>
@@ -165,6 +165,11 @@
   .report-link { display: flex; align-items: center; justify-content: center; height: 40px; margin-top: 8px; border-radius: 999px; box-shadow: 0 0 0 1px var(--line2); color: #cfcfcb;
     font-size: 13px; font-weight: 500; transition: background .25s, color .25s; }
   .report-link:hover { background: var(--s2); color: var(--tx); }
+  /* the community database is "coming soon" on fable.market: shown, not linked, until the update ships */
+  .report-link.soon, .report-link.soon:hover { background: none; color: var(--mut); cursor: default; }
+  .link.soon { cursor: default; color: var(--mut); }
+  .link.soon:hover { background: none; }
+  .soon-tag { font: 500 10.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--co2); padding: 5px 8px; border-radius: 999px; background: var(--s3); }
 
   /* ---------- settings ---------- */
   .group { padding: 2px 0; }
@@ -249,6 +254,46 @@
   #setup .art { transition: opacity .6s var(--ease); }
   #setup:not([data-step="0"]) .art { opacity: .16; }
 
+  /* ---------- language picker ---------- */
+  .lang { appearance: none; -webkit-appearance: none; flex: none; width: 176px; max-width: 56%; height: 32px; padding: 0 30px 0 13px; border: 0; border-radius: 999px; background-color: var(--s2);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238d8d8a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 10px center; background-size: 13px; box-shadow: 0 0 0 1px var(--line2); color: var(--tx);
+    font-family: inherit; font-size: 12.5px; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; outline: 0; transition: background-color .25s, box-shadow .25s; }
+  .lang:hover { background-color: var(--s3); }
+  .lang:focus-visible { box-shadow: 0 0 0 1px var(--co), 0 0 0 4px rgba(47, 91, 255, .18); }
+  .lang option { background: var(--s2); color: var(--tx); }
+
+  /* ---------- longer words, other scripts: fixed-size controls ellipsize instead of clipping or overflowing ---------- */
+  .status span { max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hero .plate .tag { max-width: calc(100% - 28px); }
+  .hero .plate .tag span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nums > div, .meta > div { min-width: 0; overflow-wrap: anywhere; }
+  .chip { min-width: 0; padding: 0 8px; }
+  .chip span { min-width: 0; padding: 2px 0; margin: -2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .seg.wide button { min-width: 0; padding: 0 6px; line-height: 1.15; overflow: hidden; overflow-wrap: anywhere; }
+  .search .btn { flex: none; white-space: nowrap; }
+  .top .tag { flex-shrink: 0; max-width: 62%; overflow: hidden; text-overflow: ellipsis; }
+  .soon-tag { flex: none; white-space: nowrap; margin-left: 10px; }
+  .link > span:first-child, .row > span { min-width: 0; }
+  .row { gap: 12px; }
+  .row b { flex: none; text-align: right; }
+  nav button span { max-width: 100%; padding: 2px 3px; margin: -2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .step { min-height: 0; overflow-y: auto; scrollbar-width: none; }
+  .step::-webkit-scrollbar { display: none; }
+  html:is([lang^="vi"], [lang^="id"]) .step .mark { margin-top: 112px; } /* longer wording in the first step: the mark sits higher so the legend and the button keep their room */
+
+  /* ---------- CJK and Thai: a system face after Inter (Inter has no such glyphs), a taller line; Vietnamese and Indonesian are Latin and keep the normal stack ---------- */
+  html[lang^="zh"] { --ui: Inter, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif; }
+  html[lang="zh-TW"], html[lang="zh-HK"], html[lang^="zh-Hant"] { --ui: Inter, "PingFang TC", "Microsoft JhengHei", "Noto Sans CJK TC", system-ui, sans-serif; }
+  html[lang^="ja"] { --ui: Inter, "Hiragino Sans", "Yu Gothic UI", Meiryo, "Noto Sans CJK JP", system-ui, sans-serif; }
+  html[lang^="ko"] { --ui: Inter, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", system-ui, sans-serif; }
+  html[lang^="th"] { --ui: Inter, "Leelawadee UI", Thonburi, "Noto Sans Thai", system-ui, sans-serif; }
+  html:is([lang^="zh"], [lang^="ja"], [lang^="ko"], [lang^="th"]) { --disp: "Inter Tight", var(--ui); --mono: "JetBrains Mono", var(--ui); }
+  html:is([lang^="zh"], [lang^="ja"], [lang^="ko"], [lang^="th"]) :is(body, .search input, .seg.wide button, .row b.word, .lang) { font-family: var(--ui); }
+  html:is([lang^="zh"], [lang^="ja"], [lang^="ko"], [lang^="th"]) body { line-height: 1.5; }
+  html:is([lang^="zh"], [lang^="ja"], [lang^="ko"], [lang^="th"]) :is(h2.title, .step h2, .empty b, .pick b, .result .head b, .me b) { line-height: 1.35; }
+  html:is([lang^="zh"], [lang^="ja"], [lang^="ko"], [lang^="th"]) :is(.eyebrow, .foot, .soon-tag) { letter-spacing: .02em; }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
   }
@@ -258,79 +303,83 @@
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="f" viewBox="22 14 60 72"><path d="M22 42A28 28 0 0 1 50 14H72A12 12 0 0 1 72 38H50V78A8 8 0 0 1 42 86H30A8 8 0 0 1 22 78Z" fill="#2F5BFF"/><rect x="57" y="46" width="24" height="20" rx="10" fill="#A9BBFF"/></symbol></svg>
 <header>
   <div class="brand"><svg><use href="#f"/></svg>fable</div>
-  <a class="term" href="https://intel.fable.market/" target="_blank" rel="noopener" title="Live alerts, hot coins, caller and launcher boards">Terminal<svg viewBox="0 0 24 24"><path d="M7 17L17 7M9 7h8v8"/></svg></a>
-  <button class="status" id="power" title="Turn Fable on or off"><i></i><span>On</span></button>
+  <button class="status" id="power" title="Turn Fable on or off" data-i18n-title="popup.power.title"><i></i><span>On</span></button>
 </header>
 
 <main>
   <!-- HOME -->
   <section class="view on" id="v-home">
     <div class="hero" id="hero">
-      <div class="plate"><img src="art/shepherd-banner.jpg" alt=""><span class="tag"><i></i>Every post has a backstory</span></div>
+      <div class="plate"><img src="art/shepherd-banner.jpg" alt=""><span class="tag"><i></i><span data-i18n="popup.home.tagline">Every post has a backstory</span></span></div>
       <div class="today">
-        <span class="eyebrow" id="today">Today on your timeline</span>
+        <span class="eyebrow" id="today" data-i18n="popup.home.today">Today on your timeline</span>
         <div class="nums">
-          <div><b id="n-checked">0</b><span>posts read</span></div>
-          <div class="a"><b id="n-flagged">0</b><span>flagged</span></div>
-          <div class="r"><b id="n-scams">0</b><span>scams</span></div>
+          <div><b id="n-checked">0</b><span data-i18n="popup.home.postsRead">posts read</span></div>
+          <div class="a"><b id="n-flagged">0</b><span data-i18n="popup.home.flagged">flagged</span></div>
+          <div class="r"><b id="n-scams">0</b><span data-i18n="popup.home.scams">scams</span></div>
         </div>
       </div>
     </div>
     <div class="chips">
-      <button class="chip" data-go="scan"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>Scan a CA</button>
-      <a class="chip" href="https://x.com/home" target="_blank"><svg viewBox="0 0 24 24"><path d="M4 4l16 16M20 4L4 20"/></svg>Open X</a>
-      <a class="chip" href="https://fable.market/check" target="_blank"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Check</a>
+      <button class="chip" data-go="scan"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg><span data-i18n="popup.home.scanCa">Scan a CA</span></button>
+      <a class="chip" href="https://x.com/home" target="_blank"><svg viewBox="0 0 24 24"><path d="M4 4l16 16M20 4L4 20"/></svg><span data-i18n="popup.common.openX">Open X</span></a>
+      <a class="chip" href="https://fable.market/check" target="_blank"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span data-i18n="popup.home.check">Check</span></a>
     </div>
-    <div class="sec"><span class="eyebrow">Trending</span>
+    <div class="sec"><span class="eyebrow" data-i18n="popup.home.trending">Trending</span>
       <div class="seg" id="trend-win"><button data-w="1h">1h</button><button data-w="3h">3h</button><button data-w="6h">6h</button><button data-w="24h">24h</button><button data-w="7d">7d</button></div></div>
     <div class="feed" id="trend"></div>
-    <div class="sec"><span class="eyebrow">Recently flagged</span></div>
+    <div class="sec"><span class="eyebrow" data-i18n="popup.home.recent">Recently flagged</span></div>
     <div class="feed" id="feed"></div>
   </section>
 
   <!-- SCAN -->
   <section class="view" id="v-scan">
-    <span class="eyebrow" style="margin:12px 2px 0">Scan</span>
-    <h2 class="title">Look anything up.</h2>
-    <p class="lede">Contracts are checked on-chain for bundles, snipers and dev dumps. Handles get their full backstory.</p>
+    <span class="eyebrow" style="margin:12px 2px 0" data-i18n="popup.common.scan">Scan</span>
+    <h2 class="title" data-i18n="popup.scan.title">Look anything up.</h2>
+    <p class="lede" data-i18n="popup.scan.lede">Contracts are checked on-chain for bundles, snipers and dev dumps. Handles get their full backstory.</p>
     <form class="search" id="scan-form" autocomplete="off">
       <svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>
-      <input id="q" placeholder="Contract, $TICKER or @handle" spellcheck="false">
-      <button class="btn" id="go" disabled>Scan</button>
+      <input id="q" placeholder="Contract, $TICKER or @handle" data-i18n-placeholder="popup.scan.placeholder" spellcheck="false">
+      <button class="btn" id="go" data-i18n="popup.common.scan" disabled>Scan</button>
     </form>
     <div id="scan-out"></div>
   </section>
 
   <!-- SETTINGS -->
   <section class="view" id="v-settings">
-    <div class="sec" style="margin-top:12px"><span class="eyebrow">Protection level</span></div>
+    <div class="sec" style="margin-top:12px"><span class="eyebrow" data-i18n="popup.set.protection">Protection level</span></div>
     <div class="seg wide" id="preset">
-      <button data-p="all">Everything</button>
-      <button data-p="warn">Warnings</button>
-      <button data-p="scam">Scams only</button>
+      <button data-p="all" data-i18n="popup.preset.all">Everything</button>
+      <button data-p="warn" data-i18n="popup.preset.warn">Warnings</button>
+      <button data-p="scam" data-i18n="popup.preset.scam">Scams only</button>
     </div>
 
-    <div class="sec"><span class="eyebrow">Labels on your timeline</span></div>
+    <div class="sec"><span class="eyebrow" data-i18n="popup.set.labels">Labels on your timeline</span></div>
     <div class="card group">
-      <label class="set"><i class="dot" style="background:var(--red)"></i><div class="txt"><b>Scams and rugs</b><span>Bundled launches, drainers, rug history</span></div><span class="sw"><input type="checkbox" data-k="showRug"><i></i></span></label>
-      <label class="set"><i class="dot" style="background:var(--amber)"></i><div class="txt"><b>Caution</b><span>Paid promos, KOL pushes, CTA farms</span></div><span class="sw"><input type="checkbox" data-k="showKol"><i></i></span></label>
-      <label class="set"><i class="dot" style="background:var(--green)"></i><div class="txt"><b>Trusted</b><span>Smart followers, real builders</span></div><span class="sw"><input type="checkbox" data-k="showLegit"><i></i></span></label>
-      <label class="set"><i class="dot" style="background:var(--mut)"></i><div class="txt"><b>Info</b><span>Official accounts, projects, call-outs</span></div><span class="sw"><input type="checkbox" data-k="showNeutral"><i></i></span></label>
+      <label class="set"><i class="dot" style="background:var(--red)"></i><div class="txt"><b data-i18n="popup.set.rug.title">Scams and rugs</b><span data-i18n="popup.set.rug.desc">Bundled launches, drainers, rug history</span></div><span class="sw"><input type="checkbox" data-k="showRug"><i></i></span></label>
+      <label class="set"><i class="dot" style="background:var(--amber)"></i><div class="txt"><b data-i18n="popup.common.caution">Caution</b><span data-i18n="popup.set.caution.desc">Paid promos, KOL pushes, CTA farms</span></div><span class="sw"><input type="checkbox" data-k="showKol"><i></i></span></label>
+      <label class="set"><i class="dot" style="background:var(--green)"></i><div class="txt"><b data-i18n="popup.common.trusted">Trusted</b><span data-i18n="popup.set.trusted.desc">Smart followers, real builders</span></div><span class="sw"><input type="checkbox" data-k="showLegit"><i></i></span></label>
+      <label class="set"><i class="dot" style="background:var(--mut)"></i><div class="txt"><b data-i18n="popup.set.info.title">Info</b><span data-i18n="popup.set.info.desc">Official accounts, projects, call-outs</span></div><span class="sw"><input type="checkbox" data-k="showNeutral"><i></i></span></label>
     </div>
 
-    <div class="sec"><span class="eyebrow">On posts</span></div>
+    <div class="sec"><span class="eyebrow" data-i18n="popup.set.onPosts">On posts</span></div>
     <div class="card group">
-      <label class="set"><div class="txt"><b>Dim scam posts</b><span>Fade the text and media of flagged posts</span></div><span class="sw"><input type="checkbox" data-k="fade"><i></i></span></label>
-      <label class="set"><div class="txt"><b>Stamps</b><span>SCAM and RUG stamped on the post</span></div><span class="sw"><input type="checkbox" data-k="stamps"><i></i></span></label>
-      <label class="set"><div class="txt"><b>Unfold cards</b><span>Open the evidence card for serious flags</span></div><span class="sw"><input type="checkbox" data-k="cards"><i></i></span></label>
-      <label class="set"><div class="txt"><b>Token underlines</b><span>Risk line under contracts and tickers</span></div><span class="sw"><input type="checkbox" data-k="tokenMarks"><i></i></span></label>
-      <label class="set"><div class="txt"><b>Profile backstory</b><span>The panel on every profile page</span></div><span class="sw"><input type="checkbox" data-k="profilePanel"><i></i></span></label>
-      <label class="set"><div class="txt"><b>Smart money feed</b><span>What smart accounts follow and post, in X's sidebar</span></div><span class="sw"><input type="checkbox" data-k="trendingPanel"><i></i></span></label>
+      <label class="set"><div class="txt"><b data-i18n="popup.set.dim.title">Dim scam posts</b><span data-i18n="popup.set.dim.desc">Fade the text and media of flagged posts</span></div><span class="sw"><input type="checkbox" data-k="fade"><i></i></span></label>
+      <label class="set"><div class="txt"><b data-i18n="popup.set.stamps.title">Stamps</b><span data-i18n="popup.set.stamps.desc">SCAM and RUG stamped on the post</span></div><span class="sw"><input type="checkbox" data-k="stamps"><i></i></span></label>
+      <label class="set"><div class="txt"><b data-i18n="popup.set.cards.title">Unfold cards</b><span data-i18n="popup.set.cards.desc">Open the evidence card for serious flags</span></div><span class="sw"><input type="checkbox" data-k="cards"><i></i></span></label>
+      <label class="set"><div class="txt"><b data-i18n="popup.set.marks.title">Token underlines</b><span data-i18n="popup.set.marks.desc">Risk line under contracts and tickers</span></div><span class="sw"><input type="checkbox" data-k="tokenMarks"><i></i></span></label>
+      <label class="set"><div class="txt"><b data-i18n="popup.set.profile.title">Profile backstory</b><span data-i18n="popup.set.profile.desc">The panel on every profile page</span></div><span class="sw"><input type="checkbox" data-k="profilePanel"><i></i></span></label>
+      <label class="set"><div class="txt"><b data-i18n="popup.set.smart.title">Smart money feed</b><span data-i18n="popup.set.smart.desc">What smart accounts follow and post, in X's sidebar</span></div><span class="sw"><input type="checkbox" data-k="trendingPanel"><i></i></span></label>
     </div>
 
-    <div class="sec"><span class="eyebrow">Data</span></div>
+    <div class="sec"><span class="eyebrow" data-i18n="popup.set.data">Data</span></div>
     <div class="card group">
-      <label class="set"><div class="txt"><b>Help improve Fable</b><span>Share the public posts and accounts you scroll past so checks get faster for everyone. Never your own account or DMs</span></div><span class="sw"><input type="checkbox" data-k="capture"><i></i></span></label>
+      <label class="set"><div class="txt"><b data-i18n="popup.set.capture.title">Help improve Fable</b><span data-i18n="popup.set.capture.desc">Share the public posts and accounts you scroll past so checks get faster for everyone. Never your own account or DMs</span></div><span class="sw"><input type="checkbox" data-k="capture"><i></i></span></label>
+    </div>
+
+    <div class="sec"><span class="eyebrow" data-i18n="popup.lang.section">Language</span></div>
+    <div class="card group">
+      <label class="set"><div class="txt"><b data-i18n="popup.lang.label">Interface language</b></div><select class="lang" id="lang"><option value="auto" data-i18n="popup.lang.auto">Auto (follows X, then the browser)</option></select></label>
     </div>
 
   </section>
@@ -339,23 +388,22 @@
   <section class="view" id="v-account">
     <div class="card me" id="me" style="margin-top:12px"></div>
 
-    <div class="sec"><span class="eyebrow">Your record</span></div>
+    <div class="sec"><span class="eyebrow" data-i18n="popup.account.record">Your record</span></div>
     <div class="card">
-      <div class="row"><span>Posts read</span><b id="a-checked">0</b></div>
-      <div class="row"><span>Flags seen</span><b id="a-flagged">0</b></div>
-      <div class="row"><span>Accounts in your graph</span><b id="a-graph">0</b></div>
-      <div class="row"><span>Plan</span><b class="word">Early access</b></div>
+      <div class="row"><span data-i18n="popup.account.postsRead">Posts read</span><b id="a-checked">0</b></div>
+      <div class="row"><span data-i18n="popup.account.flagsSeen">Flags seen</span><b id="a-flagged">0</b></div>
+      <div class="row"><span data-i18n="popup.account.graph">Accounts in your graph</span><b id="a-graph">0</b></div>
+      <div class="row"><span data-i18n="popup.account.plan">Plan</span><b class="word" data-i18n="popup.account.planEarly">Early access</b></div>
     </div>
 
     <div class="sec"><span class="eyebrow">Fable</span></div>
     <div class="card">
       <a class="link" href="https://fable.market" target="_blank"><span>fable.market</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></a>
       <a class="link" href="https://x.com/FableDotMarket" target="_blank"><span>@FableDotMarket</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></a>
-      <a class="link" href="https://fable.market/submit" target="_blank"><span>Submit a scam, shiller or smart account</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></a>
-      <a class="link" href="https://intel.fable.market/" target="_blank"><span>Terminal</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></a>
-      <a class="link" href="https://fable.market/docs" target="_blank"><span>Docs</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></a>
-      <a class="link" href="https://fable.market/privacy" target="_blank"><span>Privacy policy</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></a>
-      <button class="link" id="redo" style="width:100%"><span>Run setup again</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+      <div class="link soon"><span data-i18n="popup.account.communityDb">Community database</span><span class="soon-tag" data-i18n="popup.account.comingSoon">Coming soon</span></div>
+      <a class="link" href="https://fable.market/docs" target="_blank"><span data-i18n="popup.account.docs">Docs</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></a>
+      <a class="link" href="https://fable.market/privacy" target="_blank"><span data-i18n="popup.account.privacy">Privacy policy</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></a>
+      <button class="link" id="redo" style="width:100%"><span data-i18n="popup.account.redo">Run setup again</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
       <button class="link" id="clear" style="width:100%"><span class="danger">Clear local data</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
     </div>
     <div class="foot" id="ver"></div>
@@ -364,10 +412,10 @@
 
 <nav>
   <i class="ind" aria-hidden="true"></i>
-  <button class="on" data-tab="home"><svg viewBox="0 0 24 24"><path d="M4 10.5L12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></svg>Home</button>
-  <button data-tab="scan"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>Scan</button>
-  <button data-tab="settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>Settings</button>
-  <button data-tab="account"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/></svg>Account</button>
+  <button class="on" data-tab="home"><svg viewBox="0 0 24 24"><path d="M4 10.5L12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></svg><span data-i18n="popup.nav.home">Home</span></button>
+  <button data-tab="scan"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg><span data-i18n="popup.common.scan">Scan</span></button>
+  <button data-tab="settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg><span data-i18n="popup.nav.settings">Settings</span></button>
+  <button data-tab="account"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/></svg><span data-i18n="popup.nav.account">Account</span></button>
 </nav>
 
 <!-- first-run setup -->
@@ -377,39 +425,42 @@
 
   <div class="step" data-s="0">
     <svg class="mark"><use href="#f"/></svg>
-    <h2>Every post has<br>a backstory.</h2>
-    <p>Fable reads the accounts and contracts on your X timeline and tells you who you are really looking at.</p>
+    <h2 data-i18n-html="popup.setup.welcome.title">Every post has<br>a backstory.</h2>
+    <p data-i18n="popup.setup.welcome.lede">Fable reads the accounts and contracts on your X timeline and tells you who you are really looking at.</p>
     <div class="legend">
-      <div><i class="dot" style="background:var(--red)"></i><div><b>Scam</b><span>Bundled launches, drainers, rug history</span></div></div>
-      <div><i class="dot" style="background:var(--amber)"></i><div><b>Caution</b><span>Paid promos, KOL pushes, engagement farms</span></div></div>
-      <div><i class="dot" style="background:var(--green)"></i><div><b>Trusted</b><span>Followed by smart accounts, real builders</span></div></div>
+      <div><i class="dot" style="background:var(--red)"></i><div><b data-i18n="popup.setup.legendScam">Scam</b><span data-i18n="popup.set.rug.desc">Bundled launches, drainers, rug history</span></div></div>
+      <div><i class="dot" style="background:var(--amber)"></i><div><b data-i18n="popup.common.caution">Caution</b><span data-i18n="popup.setup.legendCautionDesc">Paid promos, KOL pushes, engagement farms</span></div></div>
+      <div><i class="dot" style="background:var(--green)"></i><div><b data-i18n="popup.common.trusted">Trusted</b><span data-i18n="popup.setup.legendTrustedDesc">Followed by smart accounts, real builders</span></div></div>
     </div>
     <div class="grow"></div>
-    <button class="btn full" data-next>Get started</button>
+    <button class="btn full" data-next data-i18n="popup.setup.start">Get started</button>
   </div>
 
   <div class="step" data-s="1">
-    <h2 class="later">Link your X account</h2>
-    <p>Fable works inside x.com. Open X once while signed in and it picks up your account on its own. Nothing is posted, followed or sent.</p>
+    <h2 class="later" data-i18n="popup.setup.link.title">Link your X account</h2>
+    <p data-i18n="popup.setup.link.lede">Fable works inside x.com. Open X once while signed in and it picks up your account on its own. Nothing is posted, followed or sent.</p>
     <div class="xcard" id="setup-x"></div>
     <div class="grow"></div>
-    <a class="btn ghost full" id="open-x" href="https://x.com/home" target="_blank">Open X</a>
-    <button class="btn full" data-next>Continue</button>
+    <a class="btn ghost full" id="open-x" href="https://x.com/home" target="_blank" data-i18n="popup.common.openX">Open X</a>
+    <button class="btn full" data-next data-i18n="popup.setup.continue">Continue</button>
   </div>
 
   <div class="step" data-s="2">
-    <h2 class="later">How loud should Fable be?</h2>
-    <p>You can change this any time in Settings.</p>
+    <h2 class="later" data-i18n="popup.setup.loud.title">How loud should Fable be?</h2>
+    <p data-i18n="popup.setup.loud.lede">You can change this any time in Settings.</p>
     <div class="pick" id="setup-pick">
-      <button data-p="all"><b>Everything</b><span>Scams, caution and trusted signals on every crypto post</span></button>
-      <button data-p="warn"><b>Warnings</b><span>Only scams and caution flags</span></button>
-      <button data-p="scam"><b>Scams only</b><span>Stay quiet unless it is a scam or a rug</span></button>
+      <button data-p="all"><b data-i18n="popup.preset.all">Everything</b><span data-i18n="popup.setup.pickAllDesc">Scams, caution and trusted signals on every crypto post</span></button>
+      <button data-p="warn"><b data-i18n="popup.preset.warn">Warnings</b><span data-i18n="popup.setup.pickWarnDesc">Only scams and caution flags</span></button>
+      <button data-p="scam"><b data-i18n="popup.preset.scam">Scams only</b><span data-i18n="popup.setup.pickScamDesc">Stay quiet unless it is a scam or a rug</span></button>
     </div>
     <div class="grow"></div>
-    <button class="btn full" id="finish">Start protecting my timeline</button>
+    <button class="btn full" id="finish" data-i18n="popup.setup.finish">Start protecting my timeline</button>
   </div>
 </div>
 
+<script src="src/config.js"></script>
+<script src="src/i18n.js"></script>
+<script src="src/locales/en.js"></script><script src="src/locales/zh-CN.js"></script><script src="src/locales/zh-TW.js"></script><script src="src/locales/ja.js"></script><script src="src/locales/ko.js"></script><script src="src/locales/vi.js"></script><script src="src/locales/th.js"></script><script src="src/locales/id.js"></script>
 <script src="popup.js"></script>
 </body>
 </html>

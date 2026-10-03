@@ -4,7 +4,7 @@
 // to this window. This file turns them into a small whitelisted record set and relays it to the
 // background worker, which batches and uploads only when an API url is configured.
 //
-// Privacy rules enforced here (see worker/CAPTURE.md):
+// Privacy rules enforced here:
 //   - read only responses the browser already got, never request anything from X
 //   - whitelist fields: nothing about the viewer's relationships, DMs, bookmarks, notifications, ads
 //   - drop the viewer entirely: their user object, their tweets, replies to them, tweets mentioning
@@ -86,6 +86,23 @@
     return [...out.values()].slice(0, 5);
   };
 
+  /* ---------------- Asian posts (0.29) ---------------- */
+  // Chinese, Japanese, Thai and Korean posts are written without spaces and often in full-width forms: "冲$PONS了", "合约0x...", "＄PONS".
+  // JS word boundaries and the address lookarounds already treat CJK/Thai letters as non-word, so a ticker or contract touching them is found;
+  // what is not found is the full-width dollar sign and full-width letters. foldWidth maps the full-width block to ASCII one character for one
+  // (the length never changes, so offsets still line up with the text on screen).
+  const foldWidth = (s) => String(s || '').replace(/[\uFF01-\uFF5E]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/\u3000/g, ' ');
+  const NON_ASCII = /[^\x00-\x7F]/;
+  const CASHTAG_RE = /\$[A-Za-z][A-Za-z0-9]{1,9}\b/g;
+  // X's own cashtag entities first; for a post with non-ASCII text, also the tickers found in the text itself (X does not always
+  // link a cashtag with no space around it). English-only posts keep exactly X's list.
+  const cashtagsFrom = (text, symbols = []) => {
+    const out = (symbols || []).map((s) => String(s?.text ?? s ?? '').toUpperCase()).filter(Boolean);
+    const t = String(text || '');
+    if (NON_ASCII.test(t)) for (const m of foldWidth(t).replace(/https?:\/\/\S+/g, ' ').matchAll(CASHTAG_RE)) out.push(m[0].slice(1).toUpperCase());
+    return [...new Set(out)];
+  };
+
   /* ---------------- GraphQL extraction ---------------- */
 
   const clip = (s, n) => (typeof s === 'string' ? s.slice(0, n) : null);
@@ -156,7 +173,7 @@
         text: text.slice(0, 4000),
         created_at: iso(l.created_at),
         lang: clip(l.lang, 8),
-        cashtags: [...new Set((ents.symbols || l.entities?.symbols || []).map((s) => String(s.text || '').toUpperCase()).filter(Boolean))].slice(0, 10),
+        cashtags: cashtagsFrom(text, ents.symbols || l.entities?.symbols).slice(0, 10),
         addresses: extractAddresses(text, urls),
         urls,
         mentions: (ents.user_mentions || []).map((m) => String(m.id_str || '')).filter(Boolean),
@@ -230,7 +247,7 @@
     return {op, ownerId: GRAPH_OPS.has(op) ? ownerId : null, users: [...users.values()], tweets: [...tweets.values()], rts};
   };
 
-  const api = {CAPTURE_OPS, extractAddresses, extractCapture, userFrom, tweetFrom, viewerFromCookie, chainHintFromUrl, chainHintFromText};
+  const api = {CAPTURE_OPS, foldWidth, cashtagsFrom, extractAddresses, extractCapture, userFrom, tweetFrom, viewerFromCookie, chainHintFromUrl, chainHintFromText};
   globalThis.FableCapture = api;
 
   /* ---------------- relay (only inside the extension's isolated world) ---------------- */

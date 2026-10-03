@@ -107,7 +107,7 @@ const isReply = (t) => !!(t.inReplyTo || t.in_reply_to || /^\s*@\w{1,15}\b/.test
 const ADDRESS = /\b(?:0x[a-fA-F0-9]{40}|bc1[a-z0-9]{25,60}|[13][a-km-zA-HJ-NP-Z1-9]{25,34}|T[1-9A-HJ-NP-Za-km-z]{33}|[1-9A-HJ-NP-Za-km-z]{32,44})\b/;
 const COINS = 'eth|btc|sol|bnb|usdt|usdc|xrp|doge|trx|ton|matic|pol|avax|ada|ltc|sui|bitcoin|ethereum|solana';
 
-// Fake giveaway: send funds, get more back (DETECTION-PLAYBOOK C3)
+// Fake giveaway: send funds, get more back 
 // what comes back must be the reader's own money doubled ("2x back", "double the amount"), never points, XP or a boost
 const DOUBLE = [
   new RegExp(`\\b(?:send|deposit|transfer)\\b[^.!?\\n]{0,80}?\\b(?:double|2x|x2|3x|twice|triple)\\b[^.!?\\n]{0,25}?\\b(?:back|in return|the amount|what you (?:sent|send|deposit(?:ed)?))\\b`, 'i'),
@@ -141,7 +141,7 @@ const DRAIN_VOCAB = /\b(?:rectif(?:y|ication) (?:of )?(?:your|ur) (?:wallet|acco
 const RESPONDERS = /\b(?:seal[\s_-]?911|security alliance|ic3(?:\.gov)?|police|law enforcement|chainabuse|zachxbt|fbi|report (?:it|this) to)\b/i;
 const SUPPORT_DM = /\b(?:dm|message|contact|reach(?: out)?(?: to)?|write to|chat with|talk to|text|email|open a ticket(?: with)?|file a (?:ticket|complaint)(?: with| at)?|submit a (?:ticket|request)(?: to| at)?)\s+(?:our|the|their|official|live|a)?\s*(?:support|help ?desk|help ?cent(?:er|re)|customer (?:care|service|support)|support (?:team|agent|desk|line|portal|center)|technical (?:team|support)|tech (?:team|support)|admins?|live agent|live chat|recovery (?:team|agent|expert))\b/i;
 const OFF_CHANNEL = /\b(?:t\.me\/\w+|telegram|whatsapp|wa\.me|signal app|\+\d[\d\s-]{7,})\b|@[A-Za-z0-9_]{3,15}|\b[a-z0-9._%+-]+@(?:gmail|outlook|proton(?:mail)?|yahoo|hotmail)\.[a-z]+\b/i;
-// recovery offers (DETECTION-PLAYBOOK C6)
+// recovery offers 
 const RECOVER = /\b(?:recover(?:ed|y|s|ing)?|retriev(?:e|ed|al|ing)|got (?:all |every(?:thing| cent) )?(?:of )?(?:it|them|my \w+(?: \w+)?|everything) back|get (?:it|them|your \w+(?: \w+)?) back|trace (?:your|the|my) (?:funds|crypto|coins|money|assets))\b/i;
 const LOSS = /\b(?:lost|stolen|scammed|hacked|drained|swindled|rugged|missing)\b/i;
 const HIRE = /\b(?:fee|upfront|expert|specialist|hacker|agent|recovery (?:team|service|pro|expert|agent|firm)|legit|trusted|reliable|helped me|did it for me|100%|guaranteed)\b/i;

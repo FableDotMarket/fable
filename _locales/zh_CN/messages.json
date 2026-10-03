@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "Fable",
+    "description": "The extension name. The brand stays Fable in every language."
+  },
+  "extDesc": {
+    "message": "每条 X 帖子的背景：跑路、捆绑、真实开发者、聪明关注者和实时图表，就在帖子下方。",
+    "description": "Short description in the browser extension list and the Chrome Web Store (max 132 characters)."
+  }
+}

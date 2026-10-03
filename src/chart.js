@@ -15,6 +15,21 @@
 // candle; a voided trade leaves; every timeframe seen is kept (capped) and follows the live trades. 0.27.2: a candle
 // 10x away from all its neighbours (a bad print) is put back in line before it is drawn, and 1D is rolled up from 4h.
 (() => {
+  // 0.29 words: every word this chart draws or puts in a tooltip comes from FableI18n (src/i18n.js, loaded before this script; keys
+  // chartui.*), read when it is drawn so a language change shows on the next paint. UX plain text (canvas, textContent, title),
+  // UT HTML-safe text for innerHTML, UD a date in the active language (month names are never hard-coded).
+  const UX = (k, p) => FableI18n.tx(k, p), UT = (k, p) => FableI18n.t(k, p);
+  const LANGK = () => (FableI18n.lang ? FableI18n.lang() : 'en');
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const MD = {month: 'short', day: 'numeric'}, MO = {month: 'short'};
+  // Intl formatters are costly to make and the axis asks for a handful of labels every frame: one answer per language and local day
+  const dmemo = new Map();
+  const UD = (t, o) => {
+    const d = new Date(t), k = `${FableI18n.lang()}|${o === MO ? 'm' : 'md'}|${d.getFullYear() * 372 + d.getMonth() * 31 + d.getDate()}`;
+    let v = dmemo.get(k);
+    if (v === undefined) { if (dmemo.size > 400) dmemo.clear(); dmemo.set(k, (v = FableI18n.date(t, o))); }
+    return v;
+  };
   const SUB = '₀₁₂₃₄₅₆₇₈₉';
   const subz = (n) => String(n).split('').map((d) => SUB[d]).join('');
   // a small price the trench way: 0.0₄479 (sig significant digits)
@@ -53,16 +68,15 @@
   // a round label step: 1, 2, 2.5 or 5 x 10^k
   const nice = (raw) => { const p = 10 ** Math.floor(Math.log10(raw)), f = raw / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p; };
   const p2 = (n) => String(n).padStart(2, '0');
-  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   // time axis label, and whether it opens a bigger unit (bold: the minute on a seconds axis, the hour, the day, the month)
   const tlabel = (t, iv) => {
     const d = new Date(t), h = d.getHours(), mi = d.getMinutes(), s = d.getSeconds();
-    if (iv >= 864e5) return d.getDate() === 1 ? [MON[d.getMonth()], true] : [`${MON[d.getMonth()]} ${d.getDate()}`, false];
-    if (!h && !mi && !s) return [`${MON[d.getMonth()]} ${d.getDate()}`, true];
+    if (iv >= 864e5) return d.getDate() === 1 ? [UD(t, MO), true] : [UD(t, MD), false];
+    if (!h && !mi && !s) return [UD(t, MD), true];
     if (iv < 60e3) return s ? [`${p2(h)}:${p2(mi)}:${p2(s)}`, false] : [`${p2(h)}:${p2(mi)}`, true];
     return [`${p2(h)}:${p2(mi)}`, !mi && iv < 3600e3];
   };
-  const ttag = (t, step) => { const d = new Date(t), hm = `${p2(d.getHours())}:${p2(d.getMinutes())}`; return step < 60e3 ? `${hm}:${p2(d.getSeconds())}` : step >= 3600e3 ? `${MON[d.getMonth()]} ${d.getDate()}${step < 864e5 ? ` ${hm}` : ''}` : hm; };
+  const ttag = (t, step) => { const d = new Date(t), hm = `${p2(d.getHours())}:${p2(d.getMinutes())}`; return step < 60e3 ? `${hm}:${p2(d.getSeconds())}` : step >= 3600e3 ? `${UD(t, MD)}${step < 864e5 ? ` ${hm}` : ''}` : hm; };
   const TFS = ['1s', '30s', '1m', '5m', '15m', '1h', '4h', '1d'];
   const TFL = {'1h': '1H', '4h': '4H', '1d': '1D'};
   const STEP = {'1s': 1e3, '15s': 15e3, '30s': 30e3, '1m': 60e3, '5m': 300e3, '15m': 900e3, '1h': 3600e3, '4h': 144e5, '1d': 864e5};
@@ -168,11 +182,11 @@
     const ui = {grow: opts.restore ? 1 : 0, played: !!opts.restore, anim: 0, raf: 0, q: [], cw: null, end: null, span: null, rng: null, vis: true, dirty: false, L: null,
       hover: null, pins: new Map(), drag: null, pinch: null, hint: -1e9, older: 0, failAt: 0, legendKey: '', ohlcKey: '', flowHtml: null, flowAt: 0, flash: 0, bubK: '', bub: [], wheel: false, tick: 0};
     host.innerHTML = `<div class="fc">
-      <div class="fc-top"><div class="fc-legend"><b></b></div><div class="fc-ctl"><span class="fc-live"><i></i><b>LIVE</b></span>${TFS.map((t) => `<button data-tf="${t}">${TFL[t] || t}</button>`).join('')}<button data-mode title="Market cap or price">MC</button></div></div>
+      <div class="fc-top"><div class="fc-legend"><b></b><span class="fc-age"></span></div><div class="fc-ctl"><span class="fc-live"><i></i><b>${UT('chartui.live')}</b></span>${TFS.map((t) => `<button data-tf="${t}">${TFL[t] || t}</button>`).join('')}<button data-mode title="${esc(UX('chartui.modeTitle'))}">${UT('chartui.mode.mc')}</button></div></div>
       <div class="fc-wrap"><canvas></canvas><div class="fc-ohlc"></div></div>
-      <div class="fc-bot"><div class="fc-rng">${RANGES.map(([k]) => `<button data-rng="${k}">${k}</button>`).join('')}<button data-all title="The whole chart from launch">All</button></div><div class="fc-flow"></div></div></div>`;
+      <div class="fc-bot"><div class="fc-rng">${RANGES.map(([k]) => `<button data-rng="${k}">${k}</button>`).join('')}<button data-all title="${esc(UX('chartui.allTitle'))}">${UT('chartui.all')}</button></div><div class="fc-flow"></div></div></div>`;
     const cv = host.querySelector('canvas'), ctx = cv.getContext('2d'), wrap = host.querySelector('.fc-wrap');
-    const legend = host.querySelector('.fc-legend'), priceEl = legend.querySelector('b'), liveEl = host.querySelector('.fc-live'), liveB = liveEl.querySelector('b'), flowEl = host.querySelector('.fc-flow'), ohlcEl = host.querySelector('.fc-ohlc');
+    const legend = host.querySelector('.fc-legend'), priceEl = legend.querySelector('b'), ageEl = legend.querySelector('.fc-age'), liveEl = host.querySelector('.fc-live'), liveB = liveEl.querySelector('b'), flowEl = host.querySelector('.fc-flow'), ohlcEl = host.querySelector('.fc-ohlc');
     const ac = new AbortController(), on = {signal: ac.signal};
     // colours: read once per theme (the card's .fable class), not on every draw
     const fab = host.closest?.('.fable') || null;
@@ -272,7 +286,7 @@
       if (!a.length) {
         ui.L = null;
         ctx.fillStyle = k.t2; ctx.font = '600 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(st.waiting ? 'Live: waiting for the first trade' : '', W / 2, H / 2); ctx.textAlign = 'left';
+        ctx.fillText(st.waiting ? UX('chartui.waiting') : '', W / 2, H / 2); ctx.textAlign = 'left';
         setLegend(null); return;
       }
       const L = (ui.L = layout(s));
@@ -406,15 +420,16 @@
         const xx = Math.round(X(Math.floor(st.post / step) * step) + cw / 2) + 0.5;
         ctx.setLineDash([3, 3]); ctx.strokeStyle = k.brand; ctx.beginPath(); ctx.moveTo(xx, top); ctx.lineTo(xx, base); ctx.stroke(); ctx.setLineDash([]);
         ctx.fillStyle = k.brand; ctx.font = '700 9.5px system-ui, sans-serif';
-        const ty = top + plotH - 6;
-        if (xx + 32 > plotW) { ctx.textAlign = 'right'; ctx.fillText('POST', xx - 4, ty); ctx.textAlign = 'left'; } else ctx.fillText('POST', xx + 4, ty);
+        const ty = top + plotH - 6, pw = UX('chartui.post');
+        // (32 px of room for the English word; a longer translation asks for its own width)
+        if (xx + Math.max(32, ctx.measureText(pw).width + 6) > plotW) { ctx.textAlign = 'right'; ctx.fillText(pw, xx - 4, ty); ctx.textAlign = 'left'; } else ctx.fillText(pw, xx + 4, ty);
         ctx.font = MONO;
       }
       // All while the coin's past is still being indexed (newest first): the chart starts at its first real candle and says
       // so, it never draws a flat line from the launch
       const lt = launchT();
       if (ui.rng === 'all' && isFinite(lt) && a[0][0] - lt > step * 2 && start <= a[0][0] + step) {
-        const msg = `History loading, shown from ${ttag(a[0][0], Math.max(step, 3600e3))}`;
+        const msg = UX('chartui.historyLoading', {when: ttag(a[0][0], Math.max(step, 3600e3))});
         ctx.font = '600 10.5px system-ui, sans-serif'; const w = ctx.measureText(msg).width + 12, x0 = Math.max(4, Math.min(plotW - w - 4, X(a[0][0])));
         ctx.globalAlpha = 0.9; ctx.fillStyle = k.bg; ctx.fillRect(x0, top + plotH - 22, w, 17); ctx.globalAlpha = 1;
         ctx.fillStyle = k.amber; ctx.fillText(msg, x0 + 6, top + plotH - 13); ctx.font = MONO;
@@ -441,12 +456,12 @@
       }
       // how to zoom, shown for a moment after a plain wheel over the chart
       if (performance.now() - ui.hint < 1600) {
-        const msg = `${/Mac/.test(navigator.platform || '') ? '⌘' : 'Ctrl'} + scroll to zoom · drag to pan`;
+        const msg = UX('chartui.zoomHint', {key: /Mac/.test(navigator.platform || '') ? '⌘' : 'Ctrl'});
         ctx.font = '600 11px system-ui, sans-serif'; const w = ctx.measureText(msg).width + 16;
         ctx.globalAlpha = 0.92; ctx.fillStyle = k.bg; ctx.fillRect(plotW / 2 - w / 2, top + plotH / 2 - 10, w, 20); ctx.globalAlpha = 1;
         ctx.fillStyle = k.t1; ctx.textAlign = 'center'; ctx.fillText(msg, plotW / 2, top + plotH / 2); ctx.textAlign = 'left'; ctx.font = MONO;
       }
-      if (lc) { const v = lc[5] + (lc[6] || 0); ctx.font = MONO; ctx.fillStyle = k.t2; ctx.fillText('Vol', 6, vy + 6); ctx.fillStyle = (lc[6] == null ? lc[4] >= lc[1] : lc[5] >= lc[6]) ? k.up : k.dn; ctx.fillText(volK(v), 6 + ctx.measureText('Vol ').width, vy + 6); }
+      if (lc) { const v = lc[5] + (lc[6] || 0), vw = UX('chartui.vol'); ctx.font = MONO; ctx.fillStyle = k.t2; ctx.fillText(vw, 6, vy + 6); ctx.fillStyle = (lc[6] == null ? lc[4] >= lc[1] : lc[5] >= lc[6]) ? k.up : k.dn; ctx.fillText(volK(v), 6 + ctx.measureText(`${vw} `).width, vy + 6); }
       setLegend(lc);
       // a live chart on seconds keeps moving while nobody trades: the empty periods pass once a second
       if (st.live && step <= 30e3 && !ui.tick) ui.tick = setTimeout(() => { ui.tick = 0; if (ui.vis && !document.hidden) schedule(); }, 1000 - (Date.now() % 1000) + 5);
@@ -464,10 +479,10 @@
       else if (st.flow && st.flowT > from) { f = {...st.flow}; for (let j = G.length - 1; j >= 0 && G[j][0] >= st.flowT - 30e3; j--) if (G[j][0] > st.flowT) add(f, G[j]); }
       else { const T = st.trades; for (let j = lb(T, from); j < T.length; j++) add(f, T[j]); }
       if (!f.buys && !f.sells && st.flow) f = st.flow;
-      const n = (x, w) => `${x} ${w}${x === 1 ? '' : 's'}`;
+      const nb = (x) => UT('chartui.buys', {n: String(x)}), ns = (x) => UT('chartui.sells', {n: String(x)}); // (a string count: no thousands comma, as before; the plural still follows it)
       let html;
-      if (!f.buys && !f.sells) { const h = st.flow1h; html = h && (h.buys || h.sells) ? `<span>Last hour</span><b class="u">${n(h.buys, 'buy')}</b><i>${usdK(h.buyUsd)}</i><b class="d">${n(h.sells, 'sell')}</b><i>${usdK(h.sellUsd)}</i>` : ''; }
-      else { const net = f.buyUsd - f.sellUsd; html = `<span>Last 5 min</span><b class="u">${n(f.buys, 'buy')}</b><i>${usdK(f.buyUsd)}</i><b class="d">${n(f.sells, 'sell')}</b><i>${usdK(f.sellUsd)}</i><em class="${net >= 0 ? 'u' : 'd'}">net ${net >= 0 ? '+' : '−'}${usdK(Math.abs(net))}</em>`; }
+      if (!f.buys && !f.sells) { const h = st.flow1h; html = h && (h.buys || h.sells) ? `<span>${UT('chartui.lastHour')}</span><b class="u">${nb(h.buys)}</b><i>${usdK(h.buyUsd)}</i><b class="d">${ns(h.sells)}</b><i>${usdK(h.sellUsd)}</i>` : ''; }
+      else { const net = f.buyUsd - f.sellUsd; html = `<span>${UT('chartui.last5min')}</span><b class="u">${nb(f.buys)}</b><i>${usdK(f.buyUsd)}</i><b class="d">${ns(f.sells)}</b><i>${usdK(f.sellUsd)}</i><em class="${net >= 0 ? 'u' : 'd'}">${UT('chartui.net', {amount: `${net >= 0 ? '+' : '−'}${usdK(Math.abs(net))}`})}</em>`; }
       if (html !== ui.flowHtml) { ui.flowHtml = html; flowEl.innerHTML = html; }
     }
     // the live price (top) and the O H L C line on the chart; built once, a frame writes only the parts that changed
@@ -478,12 +493,16 @@
       const m = mmode(), s = cur(), last = s?.c[s.c.length - 1];
       const pk = last ? `${last[4]}|${m}` : '';
       if (pk !== ui.legendKey) { ui.legendKey = pk; put(priceEl, last ? fmt(val(last[4]), m) : ''); }
+      // 0.29.2: the price is the last trade's, and a coin nobody has traded for a while (a drained pool, a dead coin) still shows it: say how old it is, and drop LIVE
+      const lt = st.trades.length ? st.trades[st.trades.length - 1][0] : 0, localIdle = lt > 0 ? Date.now() - lt : Infinity, serverIdle = st.lastTradeT > 0 ? Math.max(0, (st.asOf || st.gotAt) - st.lastTradeT) + (Date.now() - st.gotAt) : Infinity,
+        idle = Math.min(localIdle, serverIdle), old = isFinite(idle) && idle > 15 * 60e3, ak = old ? `${Math.floor(idle / 6e4)}|${LANGK()}` : '';
+      if (ak !== ui.ageKey) { ui.ageKey = ak; ageEl.textContent = old ? UX('fact.fact.last_trade', {at: FableI18n.ago(idle)}) : ''; liveEl.classList.toggle('stale', old); }
       const key = c ? `${c[0]}|${c[1]}|${c[2]}|${c[3]}|${c[4]}|${c[5]}|${c[6]}|${m}|${st.tf}` : '';
       if (key === ui.ohlcKey) return;
       ui.ohlcKey = key;
       if (!c) { ohlcEl.innerHTML = ''; OL = null; return; }
       if (!OL) {
-        ohlcEl.innerHTML = '<div><span class="tf"></span>O<i></i>H<i></i>L<i></i>C<i></i><em></em></div>';
+        ohlcEl.innerHTML = `<div><span class="tf"></span>${UT('chartui.ohlc.o')}<i></i>${UT('chartui.ohlc.h')}<i></i>${UT('chartui.ohlc.l')}<i></i>${UT('chartui.ohlc.c')}<i></i><em></em></div>`;
         const i = ohlcEl.querySelectorAll('i');
         OL = {tf: ohlcEl.querySelector('.tf'), o: i[0], h: i[1], l: i[2], c: i[3], e: ohlcEl.querySelector('em'), cls: ''};
       }
@@ -593,11 +612,18 @@
         b.hidden = isFinite(lt) && r && Date.now() - lt < r[1] / 2;
       });
       allBtn.classList.toggle('on', ui.rng === 'all');
-      modeBtn.textContent = st.mode === 'mc' ? 'MC' : 'Price'; modeBtn.classList.toggle('on', true);
+      modeBtn.textContent = st.mode === 'mc' ? UX('chartui.mode.mc') : UX('chartui.mode.price'); modeBtn.classList.toggle('on', true);
     };
-    const paintLive = () => { liveEl.classList.toggle('on', !!st.live); liveEl.classList.toggle('late', !!(st.live && st.late)); liveB.textContent = st.live && st.late ? 'DELAYED' : 'LIVE'; };
+    const paintLive = () => { liveEl.classList.toggle('on', !!st.live); liveEl.classList.toggle('late', !!(st.live && st.late)); liveB.textContent = st.live && st.late ? UX('chartui.delayed') : UX('chartui.live'); };
     paintCtl(); paintLive();
-    const at = (e) => { const r = cv.getBoundingClientRect(); return {x: e.clientX - r.left, y: e.clientY - r.top}; };
+    // a language change: the words set once at mount are set again; the canvas and the O H L C line follow on the next paint
+    const offLang = FableI18n.onChange?.(() => {
+      allBtn.textContent = UX('chartui.all'); allBtn.title = UX('chartui.allTitle'); modeBtn.title = UX('chartui.modeTitle');
+      paintCtl(); paintLive();
+      OL = null; ui.ohlcKey = ''; ui.flowHtml = null;
+      paintFlow(); schedule();
+    });
+    const at =(e) => { const r = cv.getBoundingClientRect(); return {x: e.clientX - r.left, y: e.clientY - r.top}; };
     // the wheel is only taken while the pointer is on the chart (Ctrl / pinch zooms, sideways pans), so the page scrolls freely past it
     const onWheel = (e) => {
       if (e.ctrlKey || e.metaKey) { e.preventDefault(); zoomAt(at(e).x, Math.exp(-e.deltaY * (e.deltaMode ? 0.06 : e.ctrlKey && Math.abs(e.deltaY) < 50 ? 0.01 : 0.002))); return; }
@@ -658,6 +684,8 @@
       for (const x of trs) if (x[4]) st.seen.add(x[4]);
       st.trades = trs.concat(st.trades.filter((x) => x[0] > lastT)).slice(-MAXT);
       st.tv++;
+      // the server's own newest trade of the coin (candles `lastTradeT`, any trade including unpriced dust) and its clock (`asOf`): the age of the price is measured on one clock
+      if (d.lastTradeT > 0) { st.lastTradeT = +d.lastTradeT; st.asOf = d.asOf > 0 ? +d.asOf : 0; st.gotAt = Date.now(); }
       if (d.supply > 0) { st.supply = +d.supply; if (!st.userMode) st.mode = 'mc'; }
       if (!st.supply && st.mode === 'mc') st.mode = 'p';
       if (d.firstT > 0) st.firstT = +d.firstT;
@@ -704,6 +732,7 @@
       const p = +m?.p, t = +m.t || Date.now();
       if (!(p > 0) || !isFinite(p)) return;
       const tx = m.tx ? String(m.tx) : '';
+      if (!tx && Date.now() - t > 120e3) return; // a tick older than 2 minutes is a price somebody kept, not a live one
       if (tx) { if (st.seen.has(tx)) return; st.seen.add(tx); if (st.seen.size > 8000) st.seen = new Set([...st.seen].slice(-4000)); }
       else if (st.lastTick && st.lastTick[0] === t && st.lastTick[1] === p) return; // the same tick again (the 10 s poll)
       const tr = [t, p, +m.usd > 0 ? +m.usd : 0, m.side === 'sell' ? 'sell' : 'buy', tx];
@@ -731,6 +760,7 @@
       if (m.type === 'batch' && Array.isArray(m.m)) { for (const x of m.m) live(x); return; }
       if (m.type === 'status') { since(!!m.live); st.live = !!m.live; st.late = !!m.delayed; paintLive(); schedule(); return; }
       if (m.type === 'void') { if (m.tx) voidTx(String(m.tx)); return; }
+      if (m.type === 'verdict') return; // 0.28: a verdict change is the card's business, not a trade
       push(m);
     };
 
@@ -740,7 +770,7 @@
       void: (tx) => voidTx(String(tx)),
       save() { flushQ(); return st; },
       get tf() { return st.tf; },
-      destroy() { ro.disconnect(); io?.disconnect(); ac.abort(); cancelAnimationFrame(ui.anim); cancelAnimationFrame(ui.raf); clearTimeout(ui.tick); ui.raf = 1; ui.tick = 1; },
+      destroy() { offLang?.(); ro.disconnect(); io?.disconnect(); ac.abort(); cancelAnimationFrame(ui.anim); cancelAnimationFrame(ui.raf); clearTimeout(ui.tick); ui.raf = 1; ui.tick = 1; },
     };
   }
   globalThis.FableChart = {mount, fmt, axisFmt, lifeTf, STEP, sane};
