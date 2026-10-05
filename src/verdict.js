@@ -441,7 +441,7 @@ const LAUNCH = /(\btoken\b|\bcontract\b|\bca\b|now live|is live|live on|launch(e
 export const tokenAnnouncement = (t) => ((t.cashtags?.length || 0) > 0 || RX.ca.test(`${t.text || ''}`)) && LAUNCH.test(`${t.text || ''}`);
 
 // ---------------------------------------------------------------------------
-// Official and established coins (owner rule 2026-10-02, after the $PONS and $ZEC false positives).
+// Official and established coins (rule 2026-10-02, after the $PONS and $ZEC false positives).
 // Who posted a coin and when (scam-KOL list mentions, promotion rings, co-posting waves) is a fact about the posters,
 // never proof about the coin. On a coin that has proven itself those signals are neutral facts, not a verdict:
 //   official     a launchpad or protocol token vouched for by hand (officials.js OFFICIAL_TOKENS, exact address): no

@@ -72,7 +72,7 @@ export function scopeVerdict(t, v) {
   const sym = m[1].toUpperCase();
   // 0.29.0: a giveaway post once showed a red "Token risk, $PONS" for the poster's other token, an
   // Ethereum token that is only NAMED PONS. A verdict about a launch whose symbol is an official or protected ticker ($PONS, $ZEC, $ETH ...) is never shown as
-  // the post's pill under that symbol: it would read as a flag on the official coin (owner rule: Pons is never flagged). The post's own coin has its own card.
+  // the post's pill under that symbol: it would read as a flag on the official coin (rule: Pons is never flagged). The post's own coin has its own card.
   if (PROTECTED_TICKERS.includes(sym)) return {...v, hidden: true, otherCoin: sym, fade: false};
   const named = (t?.cashtags || []).map((x) => String(x).toUpperCase());
   const other = postAddresses(t).length > 0 || (named.length > 0 && !named.includes(sym));

@@ -188,6 +188,9 @@
     const cv = host.querySelector('canvas'), ctx = cv.getContext('2d'), wrap = host.querySelector('.fc-wrap');
     const legend = host.querySelector('.fc-legend'), priceEl = legend.querySelector('b'), ageEl = legend.querySelector('.fc-age'), liveEl = host.querySelector('.fc-live'), liveB = liveEl.querySelector('b'), flowEl = host.querySelector('.fc-flow'), ohlcEl = host.querySelector('.fc-ohlc');
     const ac = new AbortController(), on = {signal: ac.signal};
+    // 0.30.1 chart markers (src/chartmarks.js): proven bad-actor trades as small badges on their candles; the data survives a remount (st.marks)
+    const MK = globalThis.FableChartMarks ? globalThis.FableChartMarks.attach(wrap, cv) : null;
+    if (MK && st.marks) MK.set(st.marks);
     // colours: read once per theme (the card's .fable class), not on every draw
     const fab = host.closest?.('.fable') || null;
     let K = null, Kk = null;
@@ -243,6 +246,8 @@
     function layout(s) {
       const padR = 62, axisB = 16, top = 19, plotW = Math.max(40, W - padR), step = s.step, a = s.c;
       const volH = Math.max(18, Math.round((H - axisB) * 0.2)), gap = 5, base = H - axisB, vy = base - volH, plotH = vy - gap - top;
+      // 0.30.0 (owner: the "Vol" label touched the first bar): the volume pane keeps a top margin for its label, as GMGN's and Axiom's volume pane does; the bars scale below it
+      const volPad = volH >= 22 ? 12 : 2;
       // the live edge: the last candle, or the current period while the stream is live (empty seconds still pass)
       const lastT = a[a.length - 1][0], nowB = st.live ? Math.floor(Date.now() / step) * step : -Infinity;
       const first = a[0][0], liveT = Math.max(lastT, Math.min(nowB, lastT + step * 600)), edge = liveT + step * (1 + RIGHT), slots = (edge - first) / step;
@@ -273,7 +278,7 @@
       lo = val(lo); hi = val(hi);
       if (!(hi > lo)) { const m = hi || 1; hi = m * 1.01; lo = m * 0.99; }
       const pad = (hi - lo) * 0.08; lo = Math.max(lo - pad, lo * 0.5); hi += pad;
-      return {padR, axisB, top, volH, plotW, plotH, base, vy, cw, step, start, end, edge, first, i0, i1, lo, hi, vmax: vmax || 1, liveT};
+      return {padR, axisB, top, volH, volPad, plotW, plotH, base, vy, cw, step, start, end, edge, first, i0, i1, lo, hi, vmax: vmax || 1, liveT};
     }
 
     function draw() {
@@ -337,7 +342,7 @@
         const k0 = nb++ * F, v = vb + (vs || 0);
         GB[k0] = xc; GB[k0 + 1] = cl >= o ? 1 : 0; GB[k0 + 2] = Math.round(Y(h)); GB[k0 + 3] = Math.round(Y(l)) + (w < 3 ? 1 : 0);
         GB[k0 + 4] = Math.round(Y(Math.max(o, cl))); GB[k0 + 5] = Math.round(Y(Math.min(o, cl)));
-        GB[k0 + 6] = v > 0 ? Math.max(1, Math.round((v / L.vmax) * (L.volH - 2) * g)) : 0; GB[k0 + 7] = (vs == null ? cl >= o : vb >= vs) ? 1 : 0; GB[k0 + 8] = w;
+        GB[k0 + 6] = v > 0 ? Math.max(1, Math.round((v / L.vmax) * (L.volH - (L.volPad ?? 2)) * g)) : 0; GB[k0 + 7] = (vs == null ? cl >= o : vb >= vs) ? 1 : 0; GB[k0 + 8] = w;
       };
       const flats = [];
       if (cw >= 2) {
@@ -415,6 +420,8 @@
         ctx.globalAlpha = 1;
       }
       ctx.restore();
+      // 0.30.1: the proven bad-actor trades (src/chartmarks.js), over the candles and under the price line, crosshair and tags
+      if (MK) MK.draw(ctx, {L, X, Y, a, val});
       // the post's own time
       if (st.post && st.post >= start && st.post <= end) {
         const xx = Math.round(X(Math.floor(st.post / step) * step) + cw / 2) + 0.5;
@@ -766,11 +773,15 @@
 
     return {
       setData, merge, push, live, setLive,
+      // 0.30.1: /v1/markers answer (src/chartmarks.js); null clears
+      setMarks(d) { st.marks = d || null; if (MK) { if (d) MK.set(d); else MK.clear(); schedule(); } },
+      get marks() { return MK; },
+      get view() { const L = ui.L; return L ? {start: L.start, end: L.end, step: L.step, cw: L.cw, plotW: L.plotW} : null; },
       setStatus: (m) => live({...m, type: 'status'}),
       void: (tx) => voidTx(String(tx)),
       save() { flushQ(); return st; },
       get tf() { return st.tf; },
-      destroy() { offLang?.(); ro.disconnect(); io?.disconnect(); ac.abort(); cancelAnimationFrame(ui.anim); cancelAnimationFrame(ui.raf); clearTimeout(ui.tick); ui.raf = 1; ui.tick = 1; },
+      destroy() { MK?.destroy(); offLang?.(); ro.disconnect(); io?.disconnect(); ac.abort(); cancelAnimationFrame(ui.anim); cancelAnimationFrame(ui.raf); clearTimeout(ui.tick); ui.raf = 1; ui.tick = 1; },
     };
   }
   globalThis.FableChart = {mount, fmt, axisFmt, lifeTf, STEP, sane};

@@ -187,6 +187,12 @@
     PREFETCHED.add(tw.id);
     const cas = fableOfficialPost(tw) ? [] : (globalThis.FableCapture?.extractAddresses?.(tw.text || '', tw.urls || []) || []).slice(0, CFG.limits?.contractsPerPost ?? 3); // ($FABLE: no coin card, nothing to fetch for one)
     for (const ca of cas) intelGet(`c:${ca.chain}:${ca.address}`, {type: 'contract', address: ca.address, chain: ca.chain, fresh: false, tweet: tw.id});
+    // 0.30.0 (a post that names its coin by $TICKER only waited for the post's verdict before the coin was even looked up): the ticker's coin is read
+    // now too, under the same key mountIntel asks for (its first non-major cashtag, the chain the text hints at)
+    if (!cas.length && !fableOfficialPost(tw)) {
+      const tick = (tw.cashtags || []).map((x) => String(x).toUpperCase()).find((x) => !MAJORS.has(x));
+      if (tick) { const chain = globalThis.FableCapture?.chainHintFromText?.(tw.text || '') || null; intelGet(`t:${tick}:${chain || ''}`, {type: 'contract', symbol: tick, chain, fresh: false, tweet: tw.id}); }
+    }
     if (cas[0]?.address) candlesFor(cas[0].address, cas[0].chain);
     const h = tw.author?.handle;
     if ((withHistory || cas.length) && h && /^[A-Za-z0-9_]{1,15}$/.test(h)) intelGet(`h:${h.toLowerCase()}`, {type: 'history', handle: h});
@@ -310,6 +316,7 @@
   // above the reader, and X moved everything. The hosts last drawn on a post are kept (KEEP, the newest 160 posts) and put back in the very task X draws the post in (this observer's
   // callback runs before the next frame): the post is as tall as X remembers on its first frame, nothing is fetched, nothing plays again.
   const KEEP = new Map(); // post id -> {ui, intel, v, bg, stamps: [(article) => ...]} the nodes drawn on the post last time
+  let STAMP_RESTORE = false; // true while restoreHosts puts the stamps back: they are already in KEEP
   const keepOf = (id) => {
     id = String(id);
     let k = KEEP.get(id);
@@ -322,6 +329,7 @@
     const k = id && KEEP.get(id);
     if (!k || !k.ui || k.ui.isConnected || article.querySelector('[data-fable-host="ui"]')) return false;
     if (k.bg !== document.body.style.backgroundColor) { KEEP.delete(id); return false; } // another theme since: drawn again, not put back
+    if (k.view !== pageView()) { KEEP.delete(id); return false; } // 0.30.0: another page view since (the whole card / compact card and the author record start again there)
     const textEl = [...article.querySelectorAll('[data-testid="tweetText"]')].find((el) => !el.closest('[role="link"][tabindex]'));
     const bar = [...article.querySelectorAll('[role="group"]')].pop();
     if (!textEl && !bar) return false;
@@ -334,7 +342,9 @@
     requestAnimationFrame(() => {
       if (!article.isConnected) return;
       if (textEl && textEl.isConnected && settings.tokenMarks && on('tokenMarks')) markTokens(article, k.v, textEl, k.t);
-      for (const st of k.stamps) st(article);
+      // 0.30.0 (ext030-scroll: the tab froze scrolling back up to a stamped post): a stamp put back must not register itself again while the list is being walked
+      // (it pushed a new closure onto k.stamps on every call, so the loop never ended); one stamp of each kind per post, the list copied before the walk
+      if (!article.querySelector('[data-fable-host="stamp"]')) { STAMP_RESTORE = true; try { for (const st of [...k.stamps]) st(article); } finally { STAMP_RESTORE = false; } }
       const cur = VERDICTS.get(id);
       if (cur && cur !== k.v && !sameVerdict(cur, k.v)) apiVerdict(article, cur);
     });
@@ -596,10 +606,16 @@
 
   // Plays each entrance once, the first time it is actually on screen.
   // Plays a host's entrance once. Idempotent, so both triggers below can call it.
+  // 0.30.0 (ext030-scroll, measured: 86 to 96% of what moved on a fast scroll was the card's 0.5 s unfold, most of it in posts already above the screen, and X
+  // remembered the half-open height): while the reader scrolls fast the pill and card open at once, with no height transition; at reading speed they unfold as before
+  let scrollY0 = scrollY, scrollT0 = 0, scrollV = 0;
+  addEventListener('scroll', () => { const now = performance.now(), dt = now - scrollT0; if (dt > 0) scrollV = dt > 250 ? 0 : Math.abs(scrollY - scrollY0) / dt; scrollY0 = scrollY; scrollT0 = now; }, {passive: true, capture: true});
+  const scrollingFast = () => performance.now() - scrollT0 < 160 && scrollV > 1.2; // px per ms: 1,200 px a second and up
   const play = (host) => {
     const root = host.shadowRoot?.querySelector('.fable');
     if (!root || root.classList.contains('in')) return;
     io.unobserve(host);
+    if (scrollingFast()) root.classList.add('done', 'open');
     root.classList.add('in');
     setTimeout(() => root.classList.add('open'), 600); // fold finished: stop clipping shadows and popovers
     countUp(root);
@@ -636,6 +652,9 @@
     // the pill and the card take no room until they play, then slide down out from under the post text
     // (hidden but laid out, they left a blank band under the text)
     const fold = host.dataset.fableHost === 'ui' || host.dataset.fableHost === 'intel';
+    // 0.30.0: a pill or card whose post is already above the screen when its data lands (the reader scrolled past it) opens at once: it never unfolds out of sight,
+    // half-open when X measures it
+    if (!played && fold && host.isConnected && host.getBoundingClientRect().bottom < 0) played = true;
     root.innerHTML = `${styleFor(root)}<div lang="${LANG()}" class="fable ${t} ${played ? 'in done open' : ''}">${fold ? `<div class="fold"><div>${html}</div></div>` : html}</div>`;
     hideBroken(root);
     if (!played) {
@@ -1255,7 +1274,7 @@
     // 0.29.1: the account's own posts do not draw its history again (authorSlot), so the panel carries it once: the judged promotion record, else the history card
     // the first post would have drawn (promotion history, build history or activity)
     const historyOf = (h) => (h && !h.error && h.days && on('cards') ? authorCardFor(h) : '');
-    const recOrHist = (h) => recordOf(h) || historyOf(h);
+    const recOrHist = (h) => `${badplayCard(h, handle)}${recordOf(h) || historyOf(h)}`; // 0.30.0: the proven flags first, then the record
     let root = null, pv = null, gotRecord = false;
     const mount = () => {
       if (root || !host.isConnected) return root;
@@ -1305,9 +1324,11 @@
       if (!verdict) { if (!gotRecord) { root = null; host.remove(); PANEL_NONE.set(handle.toLowerCase(), performance.now()); } return; }
       const v = {...verdict, id: `profile:${handle}`};
       pv = v;
+      // 0.30.0: the empty "Nothing on record yet / No flags ... found" card is not drawn next to a record or proven flags the panel already shows (it contradicted them)
       const body = v.self ? ctxHTML(v)
         : v.card?.rows
         ? ctxHTML(v) + cardHTML(v.card)
+        : gotRecord ? ctxHTML(v)
         : ctxHTML(v) + `<div class="expand"><div><div class="card"><div class="head">${fox('fox lg')}<b>Fable</b><span class="kicker">${TT('profile.kicker')}</span></div><div class="sigs"><div class="sig muted"><div class="txt"><b>${TT('profile.empty.title')}</b><span>${TT('profile.empty.body', {handle})}</span></div></div></div></div></div></div>`;
       fill('v', body);
     }).catch(() => { profileFor = null; if (!gotRecord) { host.remove(); PANEL_NONE.set(handle.toLowerCase(), performance.now()); } });
@@ -1537,7 +1558,7 @@
   };
   const mvHead = (title, right, mono, logo) => `<div class="mv-head" ${i(1)}>${fox('fox lg')}<b>Fable</b><span class="k">· ${esc(title)}</span>${logo && /^https:\/\//.test(logo) ? `<img class="mv-logo" src="${esc(logo)}" alt="" referrerpolicy="no-referrer">` : ''}<span class="r ${mono ? 'mono' : ''}">${esc(right || 'fable.market')}</span></div>`;
   // the cards that are an ACCOUNT's record (data-author: drawn once per page view, src/callout.js AUTHOR_LABELS and authorSlot) as against a coin's
-  const AUTHOR_CARDS = new Set(['promo', 'builder', 'smart', 'activity', 'record']);
+  const AUTHOR_CARDS = new Set(['promo', 'builder', 'smart', 'activity', 'record', 'badplay']);
   const mvCard = (kind, head, body, extra = '') => `<div class="expand"><div><div class="mv-card ${extra}" data-mv="${kind}"${AUTHOR_CARDS.has(kind) ? ' data-author="card"' : ''}>${head}<div class="mv-body">${body}</div></div></div></div>`;
   // a card's sections in the order the remote config gives (cards.<kind>.order), minus the hidden ones (cards.<kind>.hide)
   const cardBody = (kind, parts) => {
@@ -1727,7 +1748,8 @@
   const invOn = (kind) => on(INV_SWITCH[kind]);
   // section titles: the config's copy (English: config.js or the remote config) through TR, else the registered default
   const SEC_KEY = {launched: 'inv.section.launched', posted: 'inv.section.posted', operation: 'inv.section.operation', pushed: 'inv.section.pushed', invBundle: 'inv.section.invBundle', invMoney: 'inv.section.invMoney',
-    invSnipers: 'inv.section.invSnipers', invWash: 'inv.section.invWash', record: 'inv.section.record'};
+    invSnipers: 'inv.section.invSnipers', invWash: 'inv.section.invWash', record: 'inv.section.record', rugged: 'inv.section.rugged', proven: 'inv.section.proven', actor: 'inv.section.actor',
+    badplay: 'inv.section.badplay'};
   // a config word that still is the bundled English default is drawn from the string table (so a language, or an i18n.<lang>.<key> wording fix, applies);
   // a different English word set from the remote config goes through the sentence catalogue
   const cfgWord = (group, k) => { const c = CFG.copy?.[group]?.[k], d = globalThis.FableConfig?.DEFAULT?.copy?.[group]?.[k]; return typeof c === 'string' && c && c !== d ? TR(c) : null; };
@@ -1756,6 +1778,77 @@
   const pfHtml = (proof, max = 2) => { const l = proofLinks(proof, max); return l ? `<span class="pf">${l}</span>` : ''; };
   const invOf = (c) => (c?.investigation && typeof c.investigation === 'object' ? c.investigation : null);
   const invFacts = (inv, kind) => (Array.isArray(inv?.facts) ? inv.facts : []).filter((f) => f && f.kind === kind && typeof f.text === 'string' && f.text.trim());
+  /* 0.30.0 (RUG-v3 and the bad-play facts): the proven rug facts (creator dump, liquidity pull, operation self-snipe, insider cluster, coordinated
+     exit, wash then dump) under one heading, "How it was rugged" (a red fact or a red alert) or "Proven on chain" (amber: a front-running bot or sniper wallets are not insiders), one line each with its
+     proof chips, worst first; the facts about who runs it (the operation, a serial actor) under "Who is behind it". A fact's group: the server's own
+     `group`, else the remote config's invGroups (fact key prefix -> 'rug' | 'actor', so a new bad-play kind is placed with no store update), else the
+     built-in prefixes. A fact with no group is not drawn on the card (the detail sheet lists every fact). Switches on.invRug, on.invActor. */
+  // (bad-play v4: the honeypot facts and linked wallets holding supply join the rug group; the facts about posts on X (a shill campaign, a copied ticker,
+  // phishing posts naming the coin) are drawn in "Who pushed it", group 'push', with their posts as proof)
+  const INV_GROUPS = {'inv.dump.': 'rug', 'inv.exit.': 'rug', 'inv.pull.': 'rug', 'inv.lppull.': 'rug', 'inv.snipe.': 'rug', 'inv.cluster.': 'rug', 'inv.cexit.': 'rug', 'inv.washdump.': 'rug',
+    'inv.honeypot.': 'rug', 'inv.manip.': 'rug', 'inv.op.': 'actor', 'inv.serial.': 'actor', 'inv.x.': 'push',
+    // the Solana rug facts (src/solfacts.js; the server sends group 'rug' on each, these are the fallback), proof = Solscan txs
+    'inv.sol.dump.': 'rug', 'inv.sol.snipe': 'rug', 'inv.sol.cexit': 'rug', 'inv.sol.serial.': 'rug'};
+  const GROUPS = new Set(['rug', 'actor', 'push']);
+  const RUG_IDS = ['operation_snipe', 'sol_bundle_snipe', 'liquidity_pull', 'pool_pull', 'creator_dump', 'sol_creator_dump', 'creator_exit', 'insider_cluster', 'coordinated_exit', 'sol_coordinated_exit',
+    'wash_then_dump', 'sol_serial_deployer'];
+  const TONE_RANK = {red: 0, bad: 0, amber: 1, warn: 1, neutral: 2, '': 2, good: 3};
+  const groupOf = (f) => {
+    if (!f || f.kind === 'op' || f.kind === 'promoter') return null; // drawn by their own sections
+    if (GROUPS.has(f.group)) return f.group;
+    const g = {...INV_GROUPS, ...(CFG.invGroups && typeof CFG.invGroups === 'object' ? CFG.invGroups : {})}, k = String(f.key || '');
+    let best = '';
+    for (const p of Object.keys(g)) if (p && k.startsWith(p) && p.length > best.length) best = p;
+    if (best) return GROUPS.has(g[best]) ? g[best] : null;
+    return RUG_IDS.includes(f.id) ? 'rug' : f.id === 'serial_actor' ? 'actor' : null;
+  };
+  // the facts of one group, once each (same sentence or same first proof tx: one line), worst tone first, then the order above
+  const invGroup = (c, g) => {
+    const inv = invOf(c);
+    if (!inv || !on(g === 'rug' ? 'invRug' : g === 'actor' ? 'invActor' : 'invXside')) return [];
+    const texts = new Set(), txs = new Set();
+    return (Array.isArray(inv.facts) ? inv.facts : []).filter((f) => f && typeof f.text === 'string' && f.text.trim() && groupOf(f) === g).filter((f) => {
+      const t = f.text.trim(), p = proofList(f.proof)[0]?.url;
+      if (texts.has(t) || (p && txs.has(p))) return false;
+      texts.add(t); if (p) txs.add(p);
+      return true;
+    }).sort((a, b) => (TONE_RANK[a.tone] ?? 2) - (TONE_RANK[b.tone] ?? 2) || (RUG_IDS.indexOf(a.id) >>> 0) - (RUG_IDS.indexOf(b.id) >>> 0));
+  };
+  // a fact's mark never says more than the pill does (the pill is the verdict): a red mark only on a red pill, amber at most on an amber one
+  const pillCap = (c) => (c?.risk?.alert || c?.risk?.level === 'high' ? 'bad' : c?.risk?.level === 'medium' ? 'warn' : '');
+  const capTone = (tone, cap) => ((TONE_RANK[tone] ?? 2) < (TONE_RANK[cap] ?? 2) ? cap : tone);
+  // the headline tag of a rug reason: the catalogue's own pill stat ("creator sold 29%", "insider cluster"), in the reader's language
+  const RUG_TAG = {creator_dump: 'stat.creator_sold', creator_exit: 'stat.creator_sold', devdump: 'stat.creator_sold', liquidity_pull: 'stat.liquidity_pulled', pool_pull: 'stat.liquidity_pulled',
+    operation_snipe: 'stat.self_snipe', insider_cluster: 'stat.insider_cluster', insider_cluster2: 'stat.insider_cluster', coordinated_exit: 'stat.coordinated_exit', coordinated_exit2: 'stat.coordinated_exit',
+    wash_then_dump: 'stat.wash_then_dump', wash_then_dump2: 'stat.wash_then_dump', serial_actor: 'stat.serial_actor',
+    // bad-play v4 reason keys (bpship): a blocked sell keeps the existing 'honeypot' reason (tag HONEYPOT)
+    selltax: 'stat.sell_tax', ownerpowers: 'stat.owner_powers', hidden_concentration: 'stat.linked_hold', shillcamp: 'stat.shill_campaign', impersonation: 'stat.ticker_copy',
+    // Solana reason keys
+    sol_creator_dump: 'stat.creator_sold', sol_coordinated_exit: 'stat.coordinated_exit', sol_serial_deployer: 'stat.serial_actor'};
+  // (the stat's own params come from the reason's: "creator sold {pct}", "linked wallets hold {pct}"; a stat that needs a param the reason lacks is left out)
+  const rugTag = (r) => { const k = RUG_TAG[r?.key]; if (!k || Object.keys(globalThis.FableFactMeta?.[k] || {}).some((n) => r.params?.[n] == null)) return ''; const s = globalThis.FableI18n?.factKey?.(k, r.params || {}) || ''; return !s || /\{|\}|undefined|NaN/.test(s) ? '' : s.toLocaleUpperCase(LANG()); };
+  // the same fact said by the risk reason (text, or key + params) and by the investigation block
+  const sameFact = (r, f) => !!r && !!f && (r.text === f.text || (!!r.ikey && r.ikey === f.key && JSON.stringify(r.params || {}) === JSON.stringify(f.params || {})));
+  // a coin with a proven rug fact: its whole launch story under one heading (the 0.29 labelled rows are not drawn then): the bundle (how the launch was
+  // taken), the rug facts worst first, where the money went, the snipers, the wash share (not when a wash-then-dump fact says it for the time before the sell-off)
+  const washSaid = (c) => invGroup(c, 'rug').some((f) => f.kind === 'washdump' || f.id === 'wash_then_dump');
+  const rugSection = (c, fresh = () => '', skip = new Set()) => {
+    const proven = invGroup(c, 'rug');
+    if (!proven.length) return '';
+    const rugs = proven.filter((f) => !skip.has(f.text)); // the one the headline says (with its proof) is not said again
+    const inv = invOf(c), cap = pillCap(c);
+    const one = (kind) => (invOn(kind) ? invFacts(inv, kind).find((f) => !groupOf(f)) : null);
+    const bundle = skip.has('bundle') ? null : one('bundle');
+    const all = [bundle, ...rugs, one('money'), one('snipers'), washSaid(c) ? null : one('wash')].filter(Boolean);
+    if (!all.length) return '';
+    const max = Math.max(2, CFG.limits?.rugRows ?? 4), shown = all.slice(0, max), rest = all.length - shown.length;
+    const rugged = !!c.risk?.alert || proven.some((f) => INV_TONE[f.tone] === 'bad');
+    const rows = shown.map((f, n) => {
+      const tone = capTone(INV_TONE[f.tone] ?? '', cap), kind = groupOf(f) ? f.id || f.kind : f.kind;
+      return `<div class="mv-fact sm ${tone}${fresh(`i:${f.kind}:${f.text}`)}" data-inv="${esc(kind)}" ${i(7.2 + n * 0.3)}><i>${MARK[tone]}</i><span class="tx">${esc(FX(f))}${pfHtml(f.proof)}</span></div>`;
+    }).join('');
+    return `<div class="mv-sec mv-rug" data-inv="rug" ${i(7)}><div class="mv-sec-h"><span class="t"><i class="dot ${cap}"></i>${esc(secCopy(rugged ? 'rugged' : 'proven'))}</span></div>${rows}${rest > 0 ? `<div class="mv-inv-more" ${i(7.2 + shown.length * 0.3)}>${TT('inv.more', {n: rest})}</div>` : ''}</div>`;
+  };
   const INV_ROWS = [['bundle', 'invBundle'], ['money', 'invMoney'], ['snipers', 'invSnipers'], ['wash', 'invWash']];
   // facts that carry a switch are the ones the card can show; the keys let a refreshed card mark what is new
   const invKeys = (c) => (Array.isArray(invOf(c)?.facts) ? invOf(c).facts : []).filter((f) => f && f.text && INV_SWITCH[f.kind]).map((f) => `i:${f.kind}:${f.text}`);
@@ -1763,10 +1856,11 @@
   const invRows = (c, fresh = () => '', skip = []) => {
     const inv = invOf(c);
     if (!inv) return '';
+    const grouped = new Set([...invGroup(c, 'rug'), ...invGroup(c, 'actor'), ...invGroup(c, 'push')]); // 0.30.0: a rug fact sent with the bundle kind (no bundle story) is drawn in its group, never here too
     const rows = INV_ROWS.map(([kind, key], n) => {
-      const f = !skip.includes(kind) && invOn(kind) && invFacts(inv, kind)[0];
+      const f = !skip.includes(kind) && invOn(kind) && invFacts(inv, kind).find((x) => !grouped.has(x));
       if (!f) return '';
-      const tone = INV_TONE[f.tone] ?? '';
+      const tone = capTone(INV_TONE[f.tone] ?? '', pillCap(c)); // 0.30.0: never a redder mark than the pill
       return `<div class="mv-inv-r ${tone}${fresh(`i:${kind}:${f.text}`)}" data-inv="${kind}" ${i(7 + n * 0.4)}><span class="k">${esc(secCopy(key))}</span><span class="v"><i>${MARK[tone]}</i><span class="tx">${esc(FX(f))}${pfHtml(f.proof)}</span></span></div>`;
     }).filter(Boolean);
     return rows.length ? `<div class="mv-sec mv-inv" ${i(7)}>${rows.join('')}</div>` : '';
@@ -1777,12 +1871,16 @@
   const OUT_KEY = {rugged: ['r4', 'inv.out.rugged'], dead: ['r3', 'inv.out.dead'], trading: ['g3', 'inv.out.trading'], graduated: ['gu', 'inv.out.graduated'], here: ['this', 'inv.out.here']};
   const tsMs = (t) => { const n = Number(t); return !isFinite(n) || n <= 0 ? null : n < 1e12 ? n * 1000 : n; };
   const ethTxt = (n) => (n == null || !isFinite(+n) ? '' : +n >= 100 ? `${NUM(Math.round(+n))} ETH` : +n >= 10 ? `${(+n).toFixed(1)} ETH` : +n >= 0.01 ? `${(+n).toFixed(2)} ETH` : `${Number(+n).toPrecision(2)} ETH`);
-  const opSection = (c, fresh = () => '') => {
+  const opSection = (c, fresh = () => '', skip = new Set()) => {
     const inv = invOf(c);
-    if (!inv || !invOn('op')) return '';
-    const op = inv.operation && typeof inv.operation === 'object' ? inv.operation : null;
-    const f = invFacts(inv, 'op')[0];
-    if (!op && !f) return '';
+    if (!inv) return '';
+    // 0.30.0: "Who is behind it": the operation (its sentence and its grid) and the serial-actor facts, one section
+    const serial = invGroup(c, 'actor').filter((x) => !skip.has(x.text));
+    const opOn = invOn('op');
+    const op = opOn && inv.operation && typeof inv.operation === 'object' ? inv.operation : null;
+    const f = opOn ? invFacts(inv, 'op')[0] : null;
+    if (!op && !f && !serial.length) return '';
+    const cap = pillCap(c);
     const here = String(c.identity?.address || '').toLowerCase();
     const chain = c.identity?.chains?.[0] || 'robinhood';
     const base = EXPLORER[chain] || EXPLORER.robinhood;
@@ -1806,8 +1904,10 @@
     const cell = (x, n) => { const t = x.href ? 'a' : 'i'; return `<${t} class="q-${x.tone}" style="--c:${Math.floor(n / rows)}" title="${esc(x.tip)}"${x.href ? ` href="${esc(x.href)}" target="_blank" rel="noopener"` : ''}></${t}>`; };
     const grids = cells.length ? `<div class="mv-heat v3 slim op" style="--rows:${rows};--cols:${cols}">${cells.map(cell).join('')}</div>
       <div class="mv-key dev op"><span class="cap">${esc(some)}</span>${key}</div>` : '';
-    return `<div class="mv-sec mv-op${fresh(f ? `i:op:${f.text}` : '')}" data-inv="op" ${i(8)}><div class="mv-sec-h"><span class="t">${esc(secCopy('operation'))}</span>${op?.deployers > 1 ? `<span class="mono">${TT('inv.op.deployers', {n: op.deployers})}</span>` : ''}</div>
-      ${f ? `<div class="mv-fact sm ${tone}" ${i(8.4)}><i>${MARK[tone]}</i><span class="tx">${esc(FX(f))}${pfHtml(f.proof)}</span></div>` : ''}${grids}</div>`;
+    const serialHtml = serial.map((x, n) => { const t = capTone(INV_TONE[x.tone] ?? '', cap); return `<div class="mv-fact sm ${t}${fresh(`i:${x.kind}:${x.text}`)}" data-inv="${esc(x.id || x.kind)}" ${i(8.6 + n * 0.3)}><i>${MARK[t]}</i><span class="tx">${esc(FX(x))}${pfHtml(x.proof)}</span></div>`; }).join('');
+    const ft = capTone(tone, cap);
+    return `<div class="mv-sec mv-op${fresh(f ? `i:op:${f.text}` : '')}" data-inv="op" ${i(8)}><div class="mv-sec-h"><span class="t">${on('invActor') ? `<i class="dot ${cap}"></i>` : ''}${esc(secCopy(on('invActor') ? 'actor' : 'operation'))}</span>${op?.deployers > 1 ? `<span class="mono">${TT('inv.op.deployers', {n: op.deployers})}</span>` : ''}</div>
+      ${f ? `<div class="mv-fact sm ${ft}" ${i(8.4)}><i>${MARK[ft]}</i><span class="tx">${esc(FX(f))}${pfHtml(f.proof)}</span></div>` : ''}${serialHtml}${grids}</div>`;
   };
   // who pushed it: the accounts that posted the contract while the launch was being worked, earliest first
   const avatarOf = (handle) => { const h = String(handle || '').toLowerCase(); for (const t of TWEETS.values()) if (t.author?.handle?.toLowerCase() === h && t.author.avatar) return t.author.avatar; return null; };
@@ -1825,18 +1925,25 @@
       return {handle: h, text: f.text, shown: FX(f), tone: INV_TONE[f.tone] ?? '', proof: [...(f.proof || []), ...post.filter((x) => !have.has(x.url))], avatar: httpsUrl(p?.avatar) || (h ? avatarOf(h) : null)};
     }).filter((r) => !excl || String(r.handle || '').toLowerCase() !== String(excl).toLowerCase()); // a post that calls the coin out is not listed among those who pushed it
   };
-  const pushedSection = (c, fresh = () => '', excl = null) => {
+  const pushedSection = (c, fresh = () => '', excl = null, skip = new Set()) => {
     const rows = pushedList(c, excl);
-    if (!rows.length) return '';
+    // 0.30.0 bad play on X about this coin (a shill campaign, a copied ticker, phishing posts naming it): a line each with its posts as proof, above the accounts
+    const xs = invGroup(c, 'push').filter((f) => !skip.has(f.text)), cap = pillCap(c);
+    if (!rows.length && !xs.length) return '';
+    const xHtml = xs.slice(0, 3).map((f, n) => { const t = capTone(INV_TONE[f.tone] ?? '', cap); return `<div class="mv-fact sm ${t}${fresh(`i:${f.kind}:${f.text}`)}" data-inv="${esc(f.id || f.kind)}" ${i(9.2 + n * 0.3)}><i>${MARK[t]}</i><span class="tx">${linkHandles(FX(f))}${pfHtml(f.proof)}</span></div>`; }).join('');
     return `<div class="mv-sec mv-pushed" data-inv="pushed" ${i(9)}><div class="mv-sec-h"><span class="t">${esc(secCopy('pushed'))}</span></div>
-      ${rows.map((r, n) => `<div class="mv-push ${r.tone}${fresh(`i:promoter:${r.text}`)}" ${i(9.4 + n * 0.3)}>${r.avatar ? `<img class="pu" src="${esc(r.avatar)}" alt="" referrerpolicy="no-referrer">` : `<span class="pu ph">${esc((r.handle || '?').slice(0, 1).toUpperCase())}</span>`}<span class="tx">${linkHandles(r.shown)}${pfHtml(r.proof, 2)}</span></div>`).join('')}</div>`;
+      ${xHtml}${rows.map((r, n) => `<div class="mv-push ${r.tone}${fresh(`i:promoter:${r.text}`)}" ${i(9.4 + n * 0.3)}>${r.avatar ? `<img class="pu" src="${esc(r.avatar)}" alt="" referrerpolicy="no-referrer">` : `<span class="pu ph">${esc((r.handle || '?').slice(0, 1).toUpperCase())}</span>`}<span class="tx">${linkHandles(r.shown)}${pfHtml(r.proof, 2)}</span></div>`).join('')}</div>`;
   };
   // the contract sheet's version: every fact, every proof link, and the operation's own numbers
   const invSheet = (c) => {
     const inv = invOf(c);
     if (!inv) return '';
     const label = {op: secCopy('operation'), bundle: secCopy('invBundle'), money: secCopy('invMoney'), snipers: secCopy('invSnipers'), wash: secCopy('invWash'), promoter: secCopy('pushed')};
-    const rows = ['op', 'bundle', 'money', 'snipers', 'wash', 'promoter'].filter(invOn).flatMap((k) => invFacts(inv, k).map((f) => cxRow(label[k], `${esc(FX(f))}${pfHtml(f.proof, 8)}`)));
+    // 0.30.0: the rug and actor groups too, every fact of them (the card shows the worst four); a grouped fact is listed once, under its group
+    const rugs = invGroup(c, 'rug'), actors = invGroup(c, 'actor'), xs = invGroup(c, 'push'), grouped = new Set([...rugs, ...actors, ...xs]);
+    const rugLabel = secCopy(c.risk?.alert || rugs.some((f) => INV_TONE[f.tone] === 'bad') ? 'rugged' : 'proven');
+    const rows = [...actors.map((f) => cxRow(secCopy('actor'), `${esc(FX(f))}${pfHtml(f.proof, 8)}`)), ...rugs.map((f) => cxRow(rugLabel, `${esc(FX(f))}${pfHtml(f.proof, 8)}`)), ...xs.map((f) => cxRow(secCopy('pushed'), `${esc(FX(f))}${pfHtml(f.proof, 8)}`)),
+      ...['op', 'bundle', 'money', 'snipers', 'wash', 'promoter'].filter(invOn).flatMap((k) => invFacts(inv, k).filter((f) => !grouped.has(f)).map((f) => cxRow(label[k], `${esc(FX(f))}${pfHtml(f.proof, 8)}`)))];
     const op = invOn('op') && inv.operation;
     if (op?.launches) {
       const span = [tsMs(op.first_ts), tsMs(op.last_ts)].filter(Boolean).map((t) => new Date(t).toISOString().slice(0, 10));
@@ -1884,8 +1991,15 @@
     // the investigation's "How they took it" says it all: the older one-line bundle fact is not repeated under it
     const invHas = (kind) => !!invOf(c) && invOn(kind) && invFacts(invOf(c), kind).length > 0;
     // only the lines that say the same thing again: the older first bundle sentence, and the forensics group's launch count ("the same threat actors are tied to N launches": the investigation's operation replaces it, and a group the operation table does not back is not claimed). Details the investigation does not say (how the wallets were funded, what the creator took) stay.
-    const invSaid = [invHas('bundle') && /^(launch:bundle|fx:bundle0$)/, !!invOf(c) && /^fx:more/].filter(Boolean);
+    const invSaid = [invHas('bundle') && /^(launch:bundle|fx:bundle0$)/, !!invOf(c) && /^fx:more/,
+      // 0.30.0 Solana: the snipe fact (inv.sol.snipe) says who bought at launch, how they are linked to the creator, what they sold and took out, with its Solscan
+      // proof: the forensics bundle lines that say the same are not drawn again
+      invGroup(c, 'rug').some((f) => /^inv\.sol\.snipe/.test(String(f.key || ''))) && /^fx:bundle\d+$/].filter(Boolean);
     let facts = (c.facts || []).filter((f) => !skip.has(f.k) && !(alertOn && /^launch:bundle/.test(f.k)) && !invSaid.some((re) => re.test(f.k))).slice(0, 5);
+    // 0.30.0: a forensics line that opens with the bundle's size ("13 of 14 linked wallets held 12% ...") and goes on with how they were set up: with the investigation's
+    // bundle sentence on the card, only the part it does not say stays ("The creator registered all 14 to skip the snipe tax, ...")
+    if (invHas('bundle')) facts = facts.map((f) => (f.key === 'join.sentences' && /^fx\.linked_/.test(String(f.params?.a?.key || '')) && f.params?.b?.key
+      ? {...f, text: String(f.text || '').split(/(?<=\.)\s+/).slice(1).join(' ') || f.text, key: f.params.b.key, params: f.params.b.params} : f));
     const reading = !!c.filling;
     const title = `${TX('inv.card.launchCheck')}${sym ? ` · ${sym}` : ''}${id.name && sym && id.name.toUpperCase() !== sym.slice(1) ? ` · ${id.name}` : ''}`;
     const fresh = (k) => (seen.size && !seen.has(k) ? ' mv-new' : '');
@@ -1900,10 +2014,11 @@
     if (lead) {
       const said = new Set([lead.text]);
       facts = facts.filter((f) => !said.has(f.text));
-      const more = hard.slice(1).filter((x) => !facts.some((f) => f.text === x.text) && !(x.key === 'bundle' && invHas('bundle'))).map((x) => ({k: `risk:${x.key}`, tone: 'bad', text: x.text, ikey: x.ikey, params: x.params}));
+      const grouped = compact ? [] : [...invGroup(c, 'rug'), ...invGroup(c, 'actor'), ...invGroup(c, 'push')];
+      const more = hard.slice(1).filter((x) => !facts.some((f) => f.text === x.text) && !(x.key === 'bundle' && invHas('bundle')) && !grouped.some((f) => sameFact(x, f))).map((x) => ({k: `risk:${x.key}`, tone: 'bad', text: x.text, ikey: x.ikey, params: x.params}));
       facts = [...more, ...facts];
     }
-    const invN = invOf(c) ? ['bundle', 'money', 'snipers', 'wash', 'op', 'promoter'].filter((k) => invOn(k) && invFacts(invOf(c), k).length).length : 0;
+    const invN = invOf(c) ? ['bundle', 'money', 'snipers', 'wash', 'op', 'promoter'].filter((k) => invOn(k) && invFacts(invOf(c), k).length).length + (invGroup(c, 'rug').length ? 1 : 0) + (invGroup(c, 'actor').length && !invFacts(invOf(c), 'op').length ? 1 : 0) + (invGroup(c, 'push').length && !invFacts(invOf(c), 'promoter').length ? 1 : 0) : 0;
     facts = facts.slice(0, invN >= 4 ? Math.min(2, CFG.limits?.facts ?? 3) : (CFG.limits?.facts ?? 3));
     const factHtml = facts.map((f, n) => `<div class="mv-fact ${f.tone || ''}${fresh(`f:${f.k}`)}" ${i(6 + n)}><i>${MARK[f.tone || '']}</i>${esc(FX(f))}</div>`).join('');
     const readingHtml = reading ? `<div class="mv-reading" ${i(6 + facts.length)}><span class="th-spin"></span>${TT('inv.card.reading')}</div>` : '';
@@ -1917,8 +2032,11 @@
     const tagWord = (k) => (typeof TAG[k] === 'string' && TAG[k] ? (cfgWord('tags', k) ?? (Object.hasOwn(TAG_KEY, k) ? TX(TAG_KEY[k]) : TR(TAG[k]))) : Object.hasOwn(TAG_KEY, k) ? TX(TAG_KEY[k]) : '');
     // when the headline is the bundle, the investigation's sentence (who took it, what they did with it, its proof) is the headline: the
     // card does not say the same bundle twice, the second time longer
-    const invB = lead?.key === 'bundle' && invHas('bundle') ? invFacts(invOf(c), 'bundle')[0] : null;
-    const headline = lead ? `<div class="mv-alert mv-hl6${alertOn ? '' : ' amber'}" ${invB ? 'data-inv="bundle"' : ''} ${i(1)}><b>${esc(tagWord(lead.key) || (alertOn ? (rk.alertTitle ? FX({text: rk.alertTitle, key: rk.alertTitleKey, params: rk.alertTitleParams}) : TX('inv.tag.highRisk')) : TX('inv.tag.risk')))}</b><span>${invB ? `${esc(FX(invB))}${pfHtml(invB.proof)}` : esc(FX(lead))}</span></div>`
+    const invB = lead?.key === 'bundle' && invHas('bundle') ? (invFacts(invOf(c), 'bundle').find((f) => !groupOf(f)) || invFacts(invOf(c), 'bundle')[0]) : null;
+    // 0.30.0: a rug reason the investigation proves (the same sentence, or the same key and params) is the headline with its proof chips, and is not said again below
+    const invL = !invB && lead ? [...invGroup(c, 'rug'), ...invGroup(c, 'actor'), ...invGroup(c, 'push')].find((f) => sameFact(lead, f)) || null : null;
+    const invH = invB || invL;
+    const headline = lead ? `<div class="mv-alert mv-hl6${alertOn || pillCap(c) === 'bad' ? '' : ' amber'}" ${invH ? `data-inv="${esc(invB ? 'bundle' : invL.id || invL.kind)}"` : ''} ${i(1)}><b>${esc(tagWord(lead.key) || rugTag(lead) || (alertOn ? (rk.alertTitle ? FX({text: rk.alertTitle, key: rk.alertTitleKey, params: rk.alertTitleParams}) : TX('inv.tag.highRisk')) : TX('inv.tag.risk')))}</b><span>${invH ? `${esc(FX(invH))}${pfHtml(invH.proof)}` : esc(FX(lead))}</span></div>`
       : readHtml(contractRead(c, hist, {noPrice: shown.has('since'), noLauncher: (c.devHistory?.launched || 0) >= 2, noCaller: !!hist?.days}));
     const nStats = Math.min(nMax, stats.length);
     // the compact card (built before the investigation's sections, the costly part, are): the coin's header, its hardest fact (the headline), the numbers, the Full card button; everything else is one tap away (the button, or the detail sheet)
@@ -1928,20 +2046,24 @@
         cardBody('contract', {headline, stats: statHtml ? `<div class="mv-stats n${nStats}">${statHtml}</div>` : '', foot: cfoot}), `${alertOn ? 'alert' : ''} compact`)};
     }
     // coverage 'partial' (the linking history is still growing): the counts are lower bounds, said in small print under the last section
-    const invParts = {inv: invRows(c, fresh, invB ? ['bundle'] : []), op: opSection(c, fresh), pushed: pushedSection(c, fresh, excl)};
+    const said = new Set([...(invB ? ['bundle'] : []), ...(invL ? [invL.text] : [])]);
+    const rug = rugSection(c, fresh, said);
+    // with the rug section drawn, the bundle and the money trail are in it; a wash-then-dump fact says the wash share before the sell-off, the plain wash row is not said again
+    const skipRows = rug ? ['bundle', 'money', 'snipers', 'wash'] : invB ? ['bundle'] : [];
+    const invParts = {rug, inv: invRows(c, fresh, skipRows), op: opSection(c, fresh, said), pushed: pushedSection(c, fresh, excl, said)};
     if (invOf(c)?.coverage === 'partial') {
-      const last = ['pushed', 'op', 'inv'].find((k) => invParts[k]);
+      const last = ['pushed', 'op', 'inv', 'rug'].find((k) => invParts[k]);
       if (last) invParts[last] = invParts[last].replace(/<\/div>\s*$/, () => `<div class="mv-inv-note" ${i(9.8)}>${TT('inv.coverage.note')}</div></div>`);
     }
     return {keys, html: mvCard('contract', mvHead(sym ? `${sym}${id.name && id.name.toUpperCase() !== sym.slice(1) ? ` · ${id.name}` : ''}` : TX('inv.card.launchCheck'), mvShort(id.address), true, id.image),
       cardBody('contract', {headline, chart, stats: statHtml ? `<div class="mv-stats n${nStats}">${statHtml}</div>` : '', facts: factHtml || readingHtml ? `<div class="mv-facts">${factHtml}${readingHtml}</div>` : '',
-        inv: invParts.inv, shill: shillSection(c.connections?.shillWave, new Set([...pushedList(c, excl).map((r) => String(r.handle || '').toLowerCase()), ...(excl ? [String(excl).toLowerCase()] : [])])), also: alsoSection(others), dev: devSection(c.devHistory), op: invParts.op, pushed: invParts.pushed, track: trackSection(hist), foot}), alertOn ? 'alert' : '')};
+        rug: invParts.rug, inv: invParts.inv, shill: shillSection(c.connections?.shillWave, new Set([...pushedList(c, excl).map((r) => String(r.handle || '').toLowerCase()), ...(excl ? [String(excl).toLowerCase()] : [])])), also: alsoSection(others), dev: devSection(c.devHistory), op: invParts.op, pushed: invParts.pushed, track: trackSection(hist), foot}), alertOn ? 'alert' : '')};
   };
 
   // a referral / invite link in the post itself (the video's "Referral link detected in post")
   const REF = /[?&](ref|referral|refcode|invite|invitecode|code|affiliate|aff|via)=[^&\s]+|\/(ref|r|invite|referral|join)\/[A-Za-z0-9_-]{3,}|t\.me\/[A-Za-z0-9_]+bot\?start=|@[A-Za-z0-9_]+\?ref/i;
   // an invite link of a trading tool (proxima.tools/@code, axiom.trade/@code, padre.gg/@code ...) or a referral parameter: the post is an ad. A project's
-  // Discord or Telegram invite is not (owner rule: a paid partnership reads as promotion, never positive; a legit project is not flagged for its Discord)
+  // Discord or Telegram invite is not (rule: a paid partnership reads as promotion, never positive; a legit project is not flagged for its Discord)
   const AD_LINK = /\b(proxima\.tools|axiom\.trade|padre\.gg|tinyastro\.io|bullx\.io|photon-sol\.[a-z.]+|fomo\.family)\/(@|r\/|rk\/|ref\/)[A-Za-z0-9_-]{3,}|[?&](ref|referral|refcode|aff|affiliate)=[^&\s]+/i;
   const adLinkIn = (tw) => [...(tw?.urls || []), tw?.text || ''].some((u) => AD_LINK.test(String(u)));
   // the post is an ad: an invite link of a trading tool, or X's own "Paid partnership" label (a link to its paid-partnerships policy inside the article, or the label as the last line)
@@ -1989,6 +2111,19 @@
       .map((x, k) => `<span class="mv-chip sm a" ${i(4 + k * 0.3)}>${esc(typeof x.text === 'string' && x.text.trim() ? FX({text: x.text.trim(), key: x.key, params: x.params}) : TX('promo.rec.network', {kind: humanKind(x.kind), n: x.accounts}))}</span>`).join('');
     return mvCard('record', mvHead(secCopy('record'), `@${handle}`, true),
       `<div class="mv-stats n${stats.length}">${stats.map((x, k) => `<div class="stat mv-stat ${x.t}" ${i(1 + k * 0.3)}><b>${esc(x.v)}</b><span>${esc(x.l)}</span></div>`).join('')}</div>${recent.length ? `<div class="mv-tiles">${recent.map(tile).join('')}</div>` : ''}${nets ? `<div class="mv-chips mv-nets">${nets}</div>` : ''}<div class="mv-foot" ${i(6)}><span>${TT(stats.some((x) => x.m) ? 'promo.rec.footMedian' : 'promo.rec.foot')}</span><span></span></div>`, 'rec');
+  };
+
+  // 0.30.0 profile panel: an account's proven bad play (intel /v1/history `badplay`: shill campaigns, impersonation, phishing links, promoted then dumped), one line per
+  // fact with its proof chips (the post, the tx), worst first, at most limits.badplayRows. The server writes every sentence; an allegation says so in its own words.
+  // Switch on.invBadplayProfile.
+  const badplayCard = (h, handle) => {
+    const b = h && !h.error ? h.badplay : null;
+    const facts = (Array.isArray(b?.facts) ? b.facts : Array.isArray(b) ? b : []).filter((f) => f && typeof f.text === 'string' && f.text.trim());
+    if (!facts.length || !on('invBadplayProfile')) return '';
+    const seen = new Set();
+    const list = facts.filter((f) => !seen.has(f.text.trim()) && seen.add(f.text.trim())).sort((x, y) => (TONE_RANK[x.tone] ?? 2) - (TONE_RANK[y.tone] ?? 2)).slice(0, Math.max(1, CFG.limits?.badplayRows ?? 4));
+    const rows = list.map((f, n) => { const t = INV_TONE[f.tone] ?? ''; return `<div class="mv-fact sm ${t}" data-bp="${esc(String(f.kind || ''))}" ${i(1.4 + n * 0.3)}><i>${MARK[t]}</i><span class="tx">${linkHandles(FX(f))}${pfHtml(f.proof)}</span></div>`; }).join('');
+    return mvCard('badplay', mvHead(secCopy('badplay'), `@${handle}`, true), `<div class="mv-bp">${rows}</div>`, INV_TONE[list[0].tone] === 'bad' ? 'bp-bad' : '');
   };
 
   // Track record: the video's builder grid, coloured by what happened after each day's posts
@@ -2130,6 +2265,13 @@
       const la = c.deployment?.launchedAt, born = typeof la === 'number' ? la : Date.parse(la || '') || null; // launch time: 1 s candles for a fresh coin, the floor of All
       st.api = FableChart.mount(el, {tf: st.tf, postTime: tweetTime, born, restore: keep, onTf: (tf, o) => load(null, tf, o?.from || null), onRange: range});
       if (keep && st.data) { /* restored */ } else if (st.data) st.api.setData(st.data); else { load(first); first = null; }
+      // 0.30.1 chart markers: Robinhood coins only, and only while the remote switch on.chartMarkers is true (default off); one read per card
+      // ($PONS and $FABLE are never marked: the server sends none for them, and the card does not ask)
+      if (!keep?.marks && CFG.on?.chartMarkers === true && /^0x[0-9a-f]{40}$/i.test(address || '') && (!chain || chain === 'robinhood') && !st.marksAsked
+        && !c.own && !["0x39dbed3a2bd333467115de45665cc57f813c4571", ...(CFG.rules?.ownTokens || [])].some((x) => String(x).toLowerCase() === String(address).toLowerCase())) {
+        st.marksAsked = true;
+        chrome.runtime.sendMessage({type: 'markers', address}).then((d) => { if (d && Array.isArray(d.ev) && d.ev.length) st.api?.setMarks?.(d); }).catch(() => null);
+      }
       if (st.port) st.api.setLive(true);
     };
     const hostEl = root.host;
@@ -2172,7 +2314,7 @@
     // a stamp word in CJK / Thai is wider per character than a Latin capital: more than 4 characters step the size down so it stays on one line
     const cps = [...String(text)], wide = cps.some((c) => c.codePointAt(0) > 0x2e7f), fs = wide && cps.length > 4 ? Math.max(24, Math.floor(216 / cps.length)) : 0;
     mountShadow(s, `<div class="stamp ink"><span${fs ? ` style="font-size:${fs}px;line-height:${Math.round(fs * 1.2)}px"` : ''}>${esc(text)}</span><em>${fox('fox')}FABLE</em></div>`, t, played);
-    { const k = KEEP.get(String(idOf(article))); if (k) k.stamps.push((a) => stampPost(a, text, t, true)); }
+    { const k = !STAMP_RESTORE && KEEP.get(String(idOf(article))); if (k && k.stamps.length < 4) k.stamps.push((a) => stampPost(a, text, t, true)); }
   };
   // the one hardest fact behind the pill, in a line that fades in under it
   const setWhy = (article, text, tone = '') => {
@@ -2236,7 +2378,7 @@
   // posts of the same coin the compact one (header, headline, numbers) with a Full card button that opens the rest in place; a tap on the compact card opens the coin's detail sheet.
   const COINS = new Map(); // lowercase contract address -> id of the post that carries the full card
   const EXPANDED = new Set(); // posts whose compact card the viewer opened (a redrawn post keeps it open)
-  const syncView = () => { const view = pageView(); if (view !== ownersView) { ownersView = view; OWNERS.clear(); COINS.clear(); EXPANDED.clear(); } };
+  const syncView = () => { const view = pageView(); if (view !== ownersView) { ownersView = view; OWNERS.clear(); COINS.clear(); EXPANDED.clear(); } }; // (KEEP: restoreHosts skips an entry of another page view)
   const coinSlot = (addr, id) => {
     if (!addr) return true;
     syncView();
@@ -2388,6 +2530,8 @@
     if (v.fade && settings.fade && !article.querySelector('[data-fable-host="stamp"]')) article.setAttribute('data-fable-fade', '1');
     if (!v.fade && !article.querySelector('[data-fable-host="stamp"]')) { article.removeAttribute('data-fable-fade'); delete article.dataset.fableWantsFade; }
     if (v.stamp && settings.stamps && on('stamps') && !article.querySelector('[data-fable-host="stamp"]')) stampFromVerdict(article, v, theme(), PLAYED.has(v.id));
+    // 0.30.0 (ext030-scroll: a kept pill came back and got its verdict's card painted in again, +241 to 291 px under the reader): the host now shows this verdict
+    { const k = KEEP.get(String(v.id)); if (k && k.ui === ui && !v.pending) k.v = v; }
     // the card a promotion verdict draws (its own record), when the verdict arrived without it
     if (settings.cards && important(v) && v.card && !ui.shadowRoot?.querySelector('.expand')) { ui.shadowRoot?.querySelector('.fold > div')?.insertAdjacentHTML('beforeend', cardHTML(v.card)); hideBroken(ui.shadowRoot); }
     else if (!(settings.cards && important(v))) ui.shadowRoot?.querySelector('.expand')?.remove();
@@ -2445,11 +2589,16 @@
     const firstCandles = ca?.address ? candlesFor(ca.address, ca.chain) : null;
     const ad = adIn(article, tw); // an invite link of a trading tool or X's Paid partnership label on the post (the Proxima ad): promotion, never a positive read
     const hP = handle ? intelGet(`h:${handle.toLowerCase()}`, {type: 'history', handle}) : Promise.resolve(null);
+    // 0.30.0 (cold cards over 1 s): the history's grace period runs from now, alongside the coin's read, not after it: a coin read that took 0.6 s
+    // no longer waits another 0.3 s for a history that is still cold; a fast coin read still gives the history its 0.3 s
+    const hRace = Promise.race([hP, new Promise((r) => setTimeout(() => r(undefined), CFG.timing?.historyWaitMs ?? 300))]);
     let [c, ...rest] = await Promise.all([ca ? getC(ca, false) : null, ...list.slice(1).map((x) => getC(x, false))]);
-    // a coin card does not wait on the poster's history (up to 5 s cold): it gets 0.6 s, then the card draws without it
-    // and "Who posted it" slides in when it lands
+    // 0.30.0 (ext030-speed: 2 of 8 identical ticker reads answered "no contract for this ticker" in 77 ms, a lookup that failed on the server, and the card never drew):
+    // a ticker with no answer (not an ambiguous one) is asked once more, fresh, 0.5 s later
+    if (ca?.ticker && c?.error && !c.ambiguous && /no contract/i.test(String(c.error))) { await new Promise((r) => setTimeout(r, 500)); const again = await getC(ca, true); if (again && !again.error) { c = again; INTEL.set(ckey(ca), Promise.resolve(again)); } }
+    // a coin card does not wait on the poster's history (up to 5 s cold): the card draws without it and "Who posted it" slides in when it lands
     const coinOk = !!(c && !c.error);
-    let h = coinOk ? await Promise.race([hP, new Promise((r) => setTimeout(() => r(undefined), CFG.timing?.historyWaitMs ?? 300))]) : await hP;
+    let h = coinOk ? await hRace : await hP;
     const lateHist = h === undefined;
     if (lateHist) h = null;
     if (!after.isConnected || article.getAttribute('data-fable-done') !== v.id || article.querySelector('[data-fable-host="intel"]')) return;
@@ -2801,6 +2950,7 @@
     host.setAttribute('data-stub', '1');
     if (textEl) textEl.insertAdjacentElement('afterend', host);
     else bar.insertAdjacentElement('beforebegin', host);
+    // (0.30.0: the chip has the pill's height, ui.css .ctx.stub::after, so the words fill it without the post growing: 43 px against 50 measured)
     mountShadow(host, `<div class="ctx neutral stub" data-k="0">${fox()}</div>`, theme(), true);
     setTimeout(() => { if (host.isConnected && host.dataset.stub) host.remove(); }, 8000); // no verdict ever came: the chip does not stay
   };
@@ -2833,7 +2983,9 @@
     // a pill that takes the place of a chip already on screen does not slide in again (a card under it still unfolds)
     const instant = !!stub && !(settings.cards && important(v));
     mountShadow(host, ctxHTML(v) + (settings.cards && important(v) ? cardHTML(v.card) : ''), t, played || instant, v);
-    if (!v.pending) { const k = keepOf(v.id); k.ui = host; k.intel = null; k.v = v; k.t = t; k.bg = document.body.style.backgroundColor; k.stamps = []; }
+    // 0.30.0 (scroll, measured): a post first drawn with the wordless chip (a pending verdict, most coin posts since 0.29.2) is kept too; it was not, so on the way
+    // back up it was drawn again from nothing and grew under the reader. The host holds the words painted into it since; a verdict that changed meanwhile is painted on restore.
+    { const k = keepOf(v.id); k.ui = host; k.intel = null; k.v = v; k.t = t; k.bg = document.body.style.backgroundColor; k.view = pageView(); k.stamps = []; }
     // what play() does for a pill that slid in: the post is dimmed when no stamp will do it (the stamp dims the post as it lands)
     if (instant && !played) { PLAYED.add(v.id); if (v.fade && settings.fade) setTimeout(() => { if (article.dataset.fableWantsFade && !article.querySelector('[data-fable-host="stamp"]')) article.setAttribute('data-fable-fade', '1'); }, 200); }
     // Fable's own posts get the OFFICIAL line and nothing else: no card, underlines or stamp (the coins we name when
@@ -2865,7 +3017,7 @@
     requestAnimationFrame(place);
     new ResizeObserver(place).observe(article); // the card unfolding pushes media down, so follow it
     mountShadow(s, `<div class="stamp ink"><span>${esc(TR(v.stamp))}</span><em>${fox('fox')}FABLE</em></div>`, t, played);
-    { const k = KEEP.get(String(v.id)); if (k) k.stamps.push((a) => stampFromVerdict(a, v, t, true)); }
+    { const k = !STAMP_RESTORE && KEEP.get(String(v.id)); if (k && k.stamps.length < 4) k.stamps.push((a) => stampFromVerdict(a, v, t, true)); }
   };
 
   // The API verdict arrived after the instant local one: change only what differs, in place (the card stays put).

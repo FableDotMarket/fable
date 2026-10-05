@@ -3,7 +3,7 @@
 //
 // 1. "Scam KOL network" is red and stamped SHILL for an ACCOUNT. What makes it red: not the post and not $PONS, but the author. The API found the author named as a promoter in one of Fable's published investigations
 //    (api worker opRoles -> verdict.js "Promoter group"), and its card adds "Named in 3 public scam lists". Neither is a proven fact about the person's wallets:
-//    a published investigation names accounts that posted the operation's coins, and a public list is an allegation. Owner rules: allegations from public lists
+//    a published investigation names accounts that posted the operation's coins, and a public list is an allegation. Rules: allegations from public lists
 //    read "allegation" and are never a proven red; never call a person a scammer unless the chain proves their own wallet did it. So the pill is amber, reads
 //    "KOL network" with its basis ("named in a Fable investigation", or "N public scam lists, allegation"), and loses the SHILL stamp. Red stays for on-chain
 //    proof: a bundled launch, a rug operation, wallets tied to rugs, tokens from a tracked operation the account promoted.

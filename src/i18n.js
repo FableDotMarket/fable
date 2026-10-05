@@ -234,7 +234,8 @@
   const fmtParam = (type, v, lang) => {
     const loc = BCP[lang] || 'en', n = Number(v);
     switch (type) {
-      case 'number': return nf(lang).format(n);
+      // 0.30.0: a number under 1 keeps 2 significant digits (0.0001 ETH, a holder's 0.0044%): the 3-decimal default read them as "0"
+      case 'number': return n !== 0 && Math.abs(n) < 1 ? new Intl.NumberFormat(loc, {maximumSignificantDigits: 2}).format(n) : nf(lang).format(n);
       case 'pct': return new Intl.NumberFormat(loc, {style: 'percent', maximumFractionDigits: (n > 0 && n < 10) || (n >= 99 && n < 100) ? 1 : 0}).format(n / 100); // 99.7% stays 99.7%, never rounds up to 100%
       case 'eth': case 'sol': return n > 0 && n < 0.01 ? '<0.01' : new Intl.NumberFormat(loc, {maximumFractionDigits: n >= 100 ? 0 : n >= 10 ? 1 : 2}).format(n);
       case 'usd': return n >= 1e9 ? `$${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `$${Math.round(n / 1e3)}K` : `$${Math.round(n)}`;
@@ -271,7 +272,9 @@
       }
       if (nd.t === 'plural') {
         const v = Number(params[nd.name]);
-        const b = nd.branches[`=${v}`] || nd.branches[plural(v, hit.lang)] || nd.branches.other;
+        // 0.30.0: a language whose plural rules have no "one" (zh, ja, ko, vi, th, id) still takes a translation's own one-branch for exactly 1 ("One wallet" vs "# wallets paid by one wallet")
+        const cat = plural(v, hit.lang);
+        const b = nd.branches[`=${v}`] || (v === 1 && cat !== 'one' && nd.branches.one) || nd.branches[cat] || nd.branches.other;
         if (!b) throw new Error(`plural ${nd.name}`);
         return run(b, nd.name);
       }
@@ -279,7 +282,9 @@
       if (!b) throw new Error(`select ${nd.name}`);
       return run(b, numName);
     }).join('');
-    const out = run(icu(hit.v), null);
+    // 0.30.0: a wording that types its own percent sign after a pct param ("{pct}%", the remote-config strings written for clients without
+    // the param types) would read "92%%" now that pct is formatted: one sign, whatever the locale's percent style put next to the number
+    const out = run(icu(hit.v), null).replace(/%\s*%/g, '%');
     // an amount and its coin ("612 ETH") never split across two lines, so a sentence does not end with a lone "ETH." on its last line
     return depth === 0 && lang !== 'en' ? out.replace(/(\d) (ETH|SOL|USDC|USDT)(?![A-Za-z])/g, '$1' + String.fromCharCode(160) + '$2') : out;
   };
@@ -371,8 +376,14 @@
   active = resolve();
   rememberAuto();
 
+  // 0.30.0: a server fact key rendered with its typed params in the active language, English when the language lacks it ('' when no table has it):
+  // the card's short labels made from the catalogue's own pill stats ("creator sold 29%", "insider cluster"), with no English text to fall back on
+  const factKey = (key, params = {}) => {
+    for (const l of [active, 'en']) { if (entry(`fact.${key}`, l) === undefined) continue; try { return renderKey(key, params, l); } catch { /* the next language */ } }
+    return '';
+  };
   G.FableI18n = {
-    t, tx, tr, fact, fx, raw, num, date, ago, apply, has, set, setOverrides, ready,
+    t, tx, tr, fact, fx, raw, num, date, ago, apply, has, set, setOverrides, ready, factKey,
     LANGS, CODES, norm, plural, parseICU: icu,
     lang: () => active,
     pref: () => pref,

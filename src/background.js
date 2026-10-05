@@ -606,6 +606,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     intelGet(`/v1/coins?${new URLSearchParams({window: String(msg.window || '6h')})}`, 60e3).then(reply);
     return true;
   }
+  // 0.30.1 chart markers: the proven bad-actor trades of a Robinhood coin (intel /v1/markers, edge-cached 60 s; empty unless on.chartMarkers)
+  if (msg.type === 'markers') {
+    const a = String(msg.address || '').toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(a)) { reply(null); return true; }
+    intelGet(`/v1/markers?${new URLSearchParams({address: a, chain: 'robinhood'})}`, 60e3).then(reply);
+    return true;
+  }
   // candles: tf auto | 1s | 15s | 1m | 5m | 15m | 1h | 4h; from / to (ms) ask for an older range (zoom, pan, All).
   // A closed range never changes (kept 5 minutes); the live end is kept 10 s.
   if (msg.type === 'candles') {

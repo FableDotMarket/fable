@@ -193,7 +193,7 @@ export const OFFICIAL_ALTS = ['CoinbaseSupport', 'CoinbaseDev', 'CoinbaseAssets'
   'OpenSeaSupport', 'MagicEden_Help', 'RobinhoodCrypto', 'krakenfx', 'buildonbase', 'BaseAppSupport', 'baseapp', 'TrustWalletApp', 'Trust_Wallet',
   'BitgetWalletApp', 'bitgetglobal', 'sanctumapp', 'MEXC_Official', 'gate_io', 'Gate_io', 'HyperliquidLabs', 'LidoSupport', 'aaveaave', 'AaveAave'];
 
-// Official tokens of legit launchpads and protocols, vouched for by hand (owner rule, 2026-10-02: "Pons is a legitimate
+// Official tokens of legit launchpads and protocols, vouched for by hand (rule, 2026-10-02: "Pons is a legitimate
 // launchpad, and $PONS is its token. It must NEVER be flagged as high risk / scam / shill"). Matched by exact contract
 // address only: a copy with the same ticker on another contract is judged on its own evidence. No automated token rule
 // (scam-KOL mentions, promotion rings, co-posting waves, scanner flags) turns these red or amber; what Fable read about

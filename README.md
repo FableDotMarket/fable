@@ -4,13 +4,15 @@ The backstory behind every account on your X timeline. Rugs, real devs, paid shi
 
 This repository is the full source of the fable browser extension, so anyone can read exactly what it does before installing it.
 
-We are working on getting fable onto the Chrome Web Store, with a lot of updates lined up for right after it lands. Until then you install it yourself from the download on [fable.market](https://fable.market/install).
+**fable is on the Chrome Web Store:** [Add to Chrome](https://chromewebstore.google.com/detail/fable/ccopghdmgdpckelbbceococlbkocjgmo). That is the easiest way to install it, and it updates by itself.
 
-Current version: **0.29.3** · Languages: English, 简体中文, 繁體中文, 日本語, 한국어, Tiếng Việt, ไทย, Bahasa Indonesia · Site: [fable.market](https://fable.market) · X: [@FableDotMarket](https://x.com/FableDotMarket)
+Current version: **0.30.1** · Languages: English, 简体中文, 繁體中文, 日本語, 한국어, Tiếng Việt, ไทย, Bahasa Indonesia · Site: [fable.market](https://fable.market) · X: [@FableDotMarket](https://x.com/FableDotMarket)
 
-## Install (about a minute)
+## Install
 
-Works in Chrome, Brave, Edge, Arc and any other Chromium browser.
+**One click:** [Add to Chrome on the Chrome Web Store](https://chromewebstore.google.com/detail/fable/ccopghdmgdpckelbbceococlbkocjgmo). Works in Chrome, Brave, Edge, Arc and any other Chromium browser that installs from the Chrome Web Store. Updates arrive automatically.
+
+### Or install from this source (about a minute)
 
 1. **Download** `fable-extension.zip` from [fable.market/install](https://fable.market/install) or from this repo's [Releases](../../releases).
 2. **Unzip it.** You get a folder called `fable`. Put it somewhere you will keep it, like your Documents folder. If you delete or move it later, the extension stops working.

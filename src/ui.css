@@ -337,7 +337,7 @@ a.line:hover { background: var(--hover); }
 
 .th-topics span { color: var(--t1); box-shadow: inset 0 0 0 1px var(--edge); font-weight: 600; }
 
-/* History heatmap (owner #236): weeks are columns, days are rows (Sun..Sat). Grey hatch = no data (unknown), plain = seen, nothing notable. */
+/* History heatmap: weeks are columns, days are rows (Sun..Sat). Grey hatch = no data (unknown), plain = seen, nothing notable. */
 .fable { --hb: #22a06b; --hp: #d99a1e; --ha: #d9534f; --hr: #8b5cf6; --hc: #3b82f6; }
 .fable.dim, .fable.dark { --hb: #2fbf7f; --hp: #f0b429; --ha: #f06a6a; --hr: #a78bfa; --hc: #60a5fa; }
 .hmw { width: min(100%, calc(var(--weeks) * 21px)); margin: 4px 0 10px; }
@@ -391,7 +391,7 @@ i.hx { display: inline-block; width: 10px; min-width: 10px; height: 10px; cursor
 .cx-foot .hc-open { flex: none; height: 30px; padding: 0 14px; border: 0; border-radius: 999px; font: 700 13px TwitterChirp, -apple-system, "Segoe UI", sans-serif; cursor: pointer; }
 .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; }
 @media (prefers-reduced-motion: reduce) { .hm .hx, .cx-bars i { animation: none !important; } }
-/* ================= Video style (owner #247 / #254): pill + inline card, 1:1 with the MVP ================= */
+/* ================= Video style: pill + inline card, 1:1 with the MVP ================= */
 /* pill: the verdict line becomes a tinted box: logo, bold label, divider, stat */
 .fable .ctx { display: inline-flex; max-width: 100%; box-sizing: border-box; align-items: center; gap: 8px; margin: 12px 0 0; padding: 5px 12px 5px 10px;
   border-radius: 8px; font-size: 15px; line-height: 20px; color: var(--tone); --tone: var(--t2);
@@ -931,6 +931,14 @@ i.hx { display: inline-block; width: 10px; min-width: 10px; height: 10px; cursor
 .mv-inv-r .v i { flex: none; width: 13px; font-style: normal; font-weight: 800; text-align: center; color: var(--t2); }
 .mv-inv-r.bad .v i { color: var(--red); } .mv-inv-r.warn .v i { color: var(--amber); } .mv-inv-r.good .v i { color: var(--green); }
 
+/* 0.30.0 how it was rugged / what the insiders did / who is behind it: a heading led by a dot in the pill's colour, one line per proven fact with its proof chips */
+.mv-sec-h .t .dot { display: inline-block; width: 7px; height: 7px; margin: 0 7px 1px 0; border-radius: 50%; vertical-align: middle; background: var(--t2); }
+.mv-sec-h .t .dot.bad { background: var(--red); } .mv-sec-h .t .dot.warn { background: var(--amber); }
+.mv-rug .mv-sec-h { margin-bottom: 3px; }
+.mv-rug .mv-fact.sm { padding: 3px 0; }
+.mv-inv-more { padding: 2px 0 0 21px; font-size: 12px; line-height: 16px; font-weight: 600; color: var(--t2); cursor: pointer; }
+.mv-inv-more:hover { color: var(--t1); }
+
 /* the operation: a grid of the same threat actors' launches, one square each, linking to the coin */
 .mv-op .mv-fact { margin-top: 2px; }
 .fable .mv-heat.v3 a { display: block; border-radius: 3.5px; background: var(--q0); transition: opacity .3s var(--ease), transform .36s cubic-bezier(.3,1.4,.6,1), filter .15s; transition-delay: calc(var(--c, 0) * 30ms + 200ms); }
@@ -959,7 +967,7 @@ i.hx { display: inline-block; width: 10px; min-width: 10px; height: 10px; cursor
 .mv-nets { margin-top: 10px; min-height: 0; }
 .profile-panel .mv-card[data-mv="record"] { margin-top: 10px; }
 
-/* B9 (light theme): the soft green chip rule of the light theme won over the amber, red and grey chips (a promotion network read as positive), and the
+/* Light theme: the soft green chip rule of the light theme won over the amber, red and grey chips (a promotion network read as positive), and the
    header's mono tag took the wide letter-spacing meant for the plain uppercase tag */
 .fable.light .mv-chip.a { color: var(--amber); background: color-mix(in srgb, var(--amber) 11%, #fff); border-color: color-mix(in srgb, var(--amber) 30%, #fff); }
 .fable.light .mv-chip.r { color: var(--red); background: color-mix(in srgb, var(--red) 8%, #fff); border-color: color-mix(in srgb, var(--red) 26%, #fff); }
@@ -1012,13 +1020,31 @@ i.hx { display: inline-block; width: 10px; min-width: 10px; height: 10px; cursor
 .fable:is([lang="zh-CN"], [lang="zh-TW"], [lang="ja"], [lang="ko"], [lang="th"]) :is(.mv-push, .mv-fact, .mv-inv-r .tx, .txt span, .lead, .mv-read, .th-note) { text-wrap: balance; }
 .fable:is([lang="zh-CN"], [lang="zh-TW"], [lang="ja"], [lang="ko"], [lang="th"]) .tx { text-wrap: balance; }
 
-/* Win Lite I1 (0.29.0): a result word in another language ("Graduate แล้ว", "已毕业") is never cut: when avatar, ticker and word do not fit on one line the word drops to a second line
+/* 0.29.0: a result word in another language ("Graduate แล้ว", "已毕业") is never cut: when avatar, ticker and word do not fit on one line the word drops to a second line
    under the ticker (the ticker may take an ellipsis, the status never does) */
 .fable:not([lang="en"]) .mv-tile { flex-wrap: wrap; row-gap: 3px; }
 .fable:not([lang="en"]) .mv-tile b { flex: 1 1 auto; min-width: 3.4em; }
 .fable:not([lang="en"]) .mv-tile .res { flex: 0 0 auto; max-width: 100%; margin-left: auto; white-space: nowrap; }
-/* Win Lite I7: the sub-line of a Backstory row is one line in English; a longer language wraps to two before it takes an ellipsis */
+/* The sub-line of a Backstory row is one line in English; a longer language wraps to two before it takes an ellipsis */
 .fable:not([lang="en"]) .sig .txt span { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 
-/* Win Lite I8: Japanese lines broke inside words ("ロー / ンチ") and left a lone "た。": break at phrase boundaries (Chrome 119+, ignored by older browsers), keep the strict rules for small kana and punctuation */
+/* Japanese lines broke inside words ("ロー / ンチ") and left a lone "た。": break at phrase boundaries (Chrome 119+, ignored by older browsers), keep the strict rules for small kana and punctuation */
 .fable[lang="ja"] { word-break: auto-phrase; line-break: strict; }
+
+/* 0.30.0 polish: a stat label wraps to a second line instead of being cut with an ellipsis ("supply x price on this chain", the longer Thai and Vietnamese labels), never a third */
+.mv-stats .mv-stat > span { white-space: normal; text-overflow: clip; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+/* 0.30.0 scroll: the wordless chip is as tall as the pill its words turn it into (an empty line of the pill's type beside the mark): the post does not grow 7 px when they land */
+.fable .ctx.stub::after { content: "\200b"; font-weight: 700; }
+
+/* 0.30.1 chart markers (src/chartmarks.js): the tooltip of a badge on the chart (the fact, the time, the tx links) */
+.fc-mk-tip { position: absolute; z-index: 3; max-width: 236px; padding: 6px 8px 6px; border-radius: 8px; background: var(--bg); color: var(--t1);
+  border: 1px solid var(--edge, var(--line)); box-shadow: 0 6px 18px rgba(0,0,0,.28); font: 500 11px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif; pointer-events: auto; }
+.fc-mk-tip[hidden] { display: none; }
+.fc-mk-tip .h { display: flex; gap: 6px; align-items: flex-start; }
+.fc-mk-tip .h i { flex: none; width: 13px; height: 13px; margin-top: 1px; border-radius: 50%; color: #fff; font: 700 8.5px/13px system-ui, sans-serif; text-align: center; font-style: normal; }
+.fc-mk-tip .h b { font-weight: 600; }
+.fc-mk-tip .m { margin: 2px 0 0 19px; color: var(--t2); font-variant-numeric: tabular-nums; }
+.fc-mk-tip .l { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 3px 0 0 19px; }
+.fc-mk-tip .l a { color: var(--brand, #5b7fff); font: 500 10.5px ui-monospace, SFMono-Regular, Consolas, monospace; text-decoration: none; }
+.fc-mk-tip .l a:hover { text-decoration: underline; }
+.fc-wrap canvas.fc-mk-hot { cursor: pointer; }
